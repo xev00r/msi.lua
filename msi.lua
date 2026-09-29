@@ -4090,7 +4090,7 @@ function Library:CreateKeySystem(options)
     backdrop.Name = "Backdrop"
     backdrop.Size = UDim2.fromScale(1, 1)
     backdrop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    backdrop.BackgroundTransparency = 0.15
+    backdrop.BackgroundTransparency = 1
     backdrop.BorderSizePixel = 0
     backdrop.Parent = screen
 
@@ -4098,7 +4098,7 @@ function Library:CreateKeySystem(options)
     gradientOverlay.Name = "GradientOverlay"
     gradientOverlay.Size = UDim2.fromScale(1, 1)
     gradientOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    gradientOverlay.BackgroundTransparency = 0.35
+    gradientOverlay.BackgroundTransparency = 1
     gradientOverlay.BorderSizePixel = 0
     gradientOverlay.ZIndex = 2
     gradientOverlay.Parent = backdrop
@@ -4125,14 +4125,14 @@ function Library:CreateKeySystem(options)
     panel.Parent = backdrop
     corner(panel, 14)
 
-    local panelStroke = stroke(panel, Color3.fromRGB(120, 60, 190), 1.5, 0.3)
+    local panelStroke = stroke(panel, Color3.fromRGB(120, 60, 190), 1.5, 1)
 
     local panelImage = Instance.new("ImageLabel")
     panelImage.Name = "PanelBackgroundImage"
     panelImage.Size = UDim2.fromScale(1, 1)
     panelImage.BackgroundTransparency = 1
     panelImage.Image = backgroundImage
-    panelImage.ImageTransparency = 0
+    panelImage.ImageTransparency = 1
     panelImage.ScaleType = Enum.ScaleType.Crop
     panelImage.ZIndex = 3
     panelImage.Parent = panel
@@ -4141,7 +4141,7 @@ function Library:CreateKeySystem(options)
     panelTint.Name = "PanelTint"
     panelTint.Size = UDim2.fromScale(1, 1)
     panelTint.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    panelTint.BackgroundTransparency = 0.15
+    panelTint.BackgroundTransparency = 1
     panelTint.BorderSizePixel = 0
     panelTint.ZIndex = 4
     panelTint.Parent = panel
@@ -4467,11 +4467,40 @@ function Library:CreateKeySystem(options)
         end
         destroyed = true
         timeThread = false
-        TweenService:Create(blur, TweenInfo.new(0.4), {Size = 0}):Play()
-        TweenService:Create(backdrop, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(panel, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(panelImage, TweenInfo.new(0.4), {ImageTransparency = 1}):Play()
-        TweenService:Create(panelTint, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
+
+        local fadeInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+        TweenService:Create(blur, fadeInfo, {Size = 0}):Play()
+        TweenService:Create(backdrop, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(gradientOverlay, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(panel, fadeInfo, {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromOffset(540, 250),
+        }):Play()
+        TweenService:Create(panelStroke, fadeInfo, {Transparency = 1}):Play()
+        TweenService:Create(panelImage, fadeInfo, {ImageTransparency = 1}):Play()
+        TweenService:Create(panelTint, fadeInfo, {BackgroundTransparency = 1}):Play()
+
+        -- Fade all text / buttons inside panel
+        for _, desc in ipairs(panel:GetDescendants()) do
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
+                TweenService:Create(desc, fadeInfo, {TextTransparency = 1}):Play()
+                if desc:IsA("TextButton") or desc:IsA("TextBox") then
+                    pcall(function()
+                        TweenService:Create(desc, fadeInfo, {BackgroundTransparency = 1}):Play()
+                    end)
+                end
+            elseif desc:IsA("ImageLabel") and desc ~= panelImage then
+                TweenService:Create(desc, fadeInfo, {ImageTransparency = 1}):Play()
+            elseif desc:IsA("UIStroke") and desc ~= panelStroke then
+                TweenService:Create(desc, fadeInfo, {Transparency = 1}):Play()
+            elseif desc:IsA("Frame") and desc ~= panelTint then
+                pcall(function()
+                    TweenService:Create(desc, fadeInfo, {BackgroundTransparency = 1}):Play()
+                end)
+            end
+        end
+
         task.wait(0.45)
         if blur.Parent then
             blur:Destroy()
@@ -4590,12 +4619,34 @@ function Library:CreateKeySystem(options)
         end
     end)
 
+    -- Start panel slightly smaller for scale-in
+    panel.Size = UDim2.fromOffset(540, 250)
+
     task.spawn(function()
-        TweenService:Create(backdrop, TweenInfo.new(0.35), {
+        local fadeIn = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local scaleIn = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+        TweenService:Create(backdrop, fadeIn, {
             BackgroundTransparency = 0.15,
         }):Play()
-        TweenService:Create(panel, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        TweenService:Create(gradientOverlay, fadeIn, {
+            BackgroundTransparency = 0.35,
+        }):Play()
+        TweenService:Create(panel, scaleIn, {
             BackgroundTransparency = 0,
+            Size = UDim2.fromOffset(560, 260),
+        }):Play()
+        TweenService:Create(panelStroke, fadeIn, {
+            Transparency = 0.3,
+        }):Play()
+        TweenService:Create(panelImage, fadeIn, {
+            ImageTransparency = 0.35,
+        }):Play()
+        TweenService:Create(panelTint, fadeIn, {
+            BackgroundTransparency = 0.25,
+        }):Play()
+        TweenService:Create(blur, TweenInfo.new(0.5), {
+            Size = 8,
         }):Play()
     end)
 
@@ -4728,12 +4779,19 @@ function Library:CreateLoadingScreen(options)
             {BackgroundTransparency = 1}
         ):Play()
 
-        task.wait(fadeOutTime + 0.1)
+        -- Fade title/glow out but keep solid black background so the
+        -- handoff to KeySystem (also dark) has no flash of the game world.
+        task.wait(fadeOutTime)
+
+        if type(options.OnComplete) == "function" then
+            -- Start next stage while black screen is still up
+            task.spawn(options.OnComplete)
+        end
+
+        -- Brief overlap, then remove loading screen
+        task.wait(0.15)
         if screen.Parent then
             screen:Destroy()
-        end
-        if type(options.OnComplete) == "function" then
-            task.spawn(options.OnComplete)
         end
     end)
 
@@ -4797,6 +4855,8 @@ function Library:Launch(options)
     local useKeySystem = keyOptions.Enabled ~= false
 
     local function finishBoot(key)
+        -- Small beat after key-system fade-out, then menu fade-in
+        task.wait(0.05)
         self:Show()
         if type(options.OnReady) == "function" then
             task.spawn(options.OnReady, key)
@@ -4813,12 +4873,14 @@ function Library:Launch(options)
         local userSuccess = launchKeyOptions.OnSuccess
         local userComplete = launchKeyOptions.OnSuccessComplete
 
+        -- Ensure key system fades out before we open the menu
         launchKeyOptions.AutoDestroyOnValid = true
         launchKeyOptions.OnSuccess = function(key)
             if userSuccess then
                 task.spawn(userSuccess, key)
             end
         end
+        -- OnSuccessComplete is called AFTER destroyVisuals finishes (fade-out done)
         launchKeyOptions.OnSuccessComplete = function(key)
             if userComplete then
                 task.spawn(userComplete, key)
@@ -4831,6 +4893,7 @@ function Library:Launch(options)
 
     if useLoading then
         loadingOptions = table.clone(loadingOptions)
+        -- Loading fades out, then OnComplete fires → key system fades in
         loadingOptions.OnComplete = startKeySystem
         self:CreateLoadingScreen(loadingOptions)
     else
