@@ -444,6 +444,7 @@ window.BorderSizePixel  = 0
 window.ClipsDescendants = true
 window.ZIndex           = 1
 window.Parent           = screenGui
+window.Visible          = false
 corner(window, WINDOW_RADIUS)
 stroke(window, THEME.Accent, 1.5, 0.3)
 
@@ -4446,8 +4447,11 @@ function Library:CreateKeySystem(options)
         end
     end
 
-    local function destroyVisuals()
+    local function destroyVisuals(afterClose)
         if destroyed then
+            if afterClose then
+                task.spawn(afterClose)
+            end
             return
         end
         destroyed = true
@@ -4464,16 +4468,22 @@ function Library:CreateKeySystem(options)
         if screen.Parent then
             screen:Destroy()
         end
+        if afterClose then
+            task.spawn(afterClose)
+        end
     end
 
-    local function closeKeySystem()
+    local function closeKeySystem(afterClose)
         if destroyed then
+            if afterClose then
+                task.spawn(afterClose)
+            end
             return
         end
         if options.OnClose then
             task.spawn(options.OnClose)
         end
-        task.spawn(destroyVisuals)
+        task.spawn(destroyVisuals, afterClose)
     end
 
     local function failKey()
@@ -4524,7 +4534,13 @@ function Library:CreateKeySystem(options)
             end
             task.wait(options.SuccessDelay or 0.4)
             if autoDestroyOnValid then
-                closeKeySystem()
+                closeKeySystem(function()
+                    if options.OnSuccessComplete then
+                        task.spawn(options.OnSuccessComplete, submittedKey)
+                    end
+                end)
+            elseif options.OnSuccessComplete then
+                task.spawn(options.OnSuccessComplete, submittedKey)
             end
             verifying = false
             return true
@@ -4600,7 +4616,8 @@ end
 ----------------------------------------------------------------
 -- LOADING SCREEN API
 ----------------------------------------------------------------
-function Library:CreateLoadingScreen()
+function Library:CreateLoadingScreen(options)
+    options = options or {}
     local screen = Instance.new("ScreenGui")
     screen.Name = "MSILoadingScreen"
     screen.ResetOnSpawn = false
@@ -4701,10 +4718,111 @@ function Library:CreateLoadingScreen()
         ):Play()
 
         task.wait(fadeOutTime + 0.1)
-        screen:Destroy()
+        if screen.Parent then
+            screen:Destroy()
+        end
+        if type(options.OnComplete) == "function" then
+            task.spawn(options.OnComplete)
+        end
     end)
 
     return screen
+end
+
+----------------------------------------------------------------
+-- MAIN MENU VISIBILITY / BOOT SEQUENCE
+----------------------------------------------------------------
+function Library:Show()
+    menuOpen = true
+    window.Visible = true
+    hideTooltip()
+
+    TweenService:Create(
+        window,
+        TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        {
+            Size = UDim2.fromOffset(960, 600),
+            BackgroundTransparency = 0,
+        }
+    ):Play()
+
+    return self
+end
+
+function Library:Hide()
+    menuOpen = false
+    hideTooltip()
+
+    TweenService:Create(
+        window,
+        TweenInfo.new(0.25, Enum.EasingStyle.Quad),
+        {
+            Size = UDim2.fromOffset(960, 0),
+            BackgroundTransparency = 1,
+        }
+    ):Play()
+
+    task.delay(0.25, function()
+        if not menuOpen and window.Parent then
+            window.Visible = false
+        end
+    end)
+
+    return self
+end
+
+function Library:Launch(options)
+    options = options or {}
+
+    self:Hide()
+
+    local loadingOptions = options.LoadingScreen or {}
+    local keyOptions = options.KeySystem or {}
+
+    if loadingOptions.Enabled ~= false then
+        loadingOptions = table.clone(loadingOptions)
+        loadingOptions.OnComplete = function()
+            local launchKeyOptions = table.clone(keyOptions)
+            local userSuccess = launchKeyOptions.OnSuccess
+            local userComplete = launchKeyOptions.OnSuccessComplete
+
+            launchKeyOptions.AutoDestroyOnValid = true
+            launchKeyOptions.OnSuccess = function(key)
+                if userSuccess then
+                    task.spawn(userSuccess, key)
+                end
+            end
+            launchKeyOptions.OnSuccessComplete = function(key)
+                if userComplete then
+                    task.spawn(userComplete, key)
+                end
+                self:Show()
+                if type(options.OnReady) == "function" then
+                    task.spawn(options.OnReady, key)
+                end
+            end
+
+            self:CreateKeySystem(launchKeyOptions)
+        end
+
+        self:CreateLoadingScreen(loadingOptions)
+    else
+        local launchKeyOptions = table.clone(keyOptions)
+        local userComplete = launchKeyOptions.OnSuccessComplete
+        launchKeyOptions.AutoDestroyOnValid = true
+        launchKeyOptions.OnSuccessComplete = function(key)
+            if userComplete then
+                task.spawn(userComplete, key)
+            end
+            self:Show()
+            if type(options.OnReady) == "function" then
+                task.spawn(options.OnReady, key)
+            end
+        end
+        self:CreateKeySystem(launchKeyOptions)
+    end
+
+    return self
 end
 
 ----------------------------------------------------------------
@@ -4800,6 +4918,10 @@ end
 
 Library.GetKeybindList = function()
     return keybindListHost
+end
+
+Library.Start = function(options)
+    return Library:Launch(options)
 end
 
 return Library
