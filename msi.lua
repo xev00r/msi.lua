@@ -11,6 +11,17 @@ local RunService       = game:GetService("RunService")
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+-- Polyfill for older executors / non-Luau environments
+if type(table.clone) ~= "function" then
+    function table.clone(t)
+        local out = {}
+        for k, v in pairs(t) do
+            out[k] = v
+        end
+        return out
+    end
+end
+
 ----------------------------------------------------------------
 -- THEME - PURPLE/NEON
 ----------------------------------------------------------------
@@ -458,7 +469,7 @@ windowGradient.Rotation = 90
 windowGradient.Parent = window
 
 window.BackgroundTransparency = 1
-TweenService:Create(window, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {BackgroundTransparency = 0}):Play()
+-- Don't auto-fade in on create — Show()/Launch() handles the entrance tween
 
 ----------------------------------------------------------------
 -- HEADER
@@ -3633,7 +3644,7 @@ end)
 ----------------------------------------------------------------
 -- HEADER BUTTONS
 ----------------------------------------------------------------
-local menuOpen = true
+local menuOpen = false
 
 toggleMenu = function()
     menuOpen = not menuOpen
@@ -3882,7 +3893,7 @@ end
 -- KEYBIND LIST
 ----------------------------------------------------------------
 local keybindListHost = nil
-local keybindListEnabled = false
+-- keybindListEnabled already declared earlier (shared state)
 
 local function rebuildKeybindList()
     if not keybindListHost then
@@ -4653,7 +4664,7 @@ function Library:CreateLoadingScreen(options)
     task.spawn(function()
         local t = 0
         while pulseRunning and background.Parent do
-            t += RunService.RenderStepped:Wait()
+            t = t + RunService.RenderStepped:Wait()
             local pulse = 0.55 + math.sin(t * 0.6) * 0.15
             gradient.Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 0, 0)),
@@ -4677,7 +4688,7 @@ function Library:CreateLoadingScreen(options)
     titleImage.Position = UDim2.fromScale(0.5, 0.5)
     titleImage.Size = UDim2.fromScale(1, 1)
     titleImage.BackgroundTransparency = 1
-    titleImage.Image = "rbxassetid://122286881817734"
+    titleImage.Image = options.Image or options.BackgroundImage or "rbxassetid://122286881817734"
     titleImage.ImageTransparency = 1
     titleImage.ScaleType = Enum.ScaleType.Fit
     titleImage.Parent = titleContainer
@@ -4774,53 +4785,56 @@ end
 function Library:Launch(options)
     options = options or {}
 
-    self:Hide()
+    -- Force closed state before boot sequence
+    menuOpen = false
     window.Visible = false
+    window.Size = UDim2.fromOffset(960, 0)
+    window.BackgroundTransparency = 1
 
     local loadingOptions = options.LoadingScreen or {}
     local keyOptions = options.KeySystem or {}
+    local useLoading = loadingOptions.Enabled ~= false
+    local useKeySystem = keyOptions.Enabled ~= false
 
-    if loadingOptions.Enabled ~= false then
-        loadingOptions = table.clone(loadingOptions)
-        loadingOptions.OnComplete = function()
-            local launchKeyOptions = table.clone(keyOptions)
-            local userSuccess = launchKeyOptions.OnSuccess
-            local userComplete = launchKeyOptions.OnSuccessComplete
+    local function finishBoot(key)
+        self:Show()
+        if type(options.OnReady) == "function" then
+            task.spawn(options.OnReady, key)
+        end
+    end
 
-            launchKeyOptions.AutoDestroyOnValid = true
-            launchKeyOptions.OnSuccess = function(key)
-                if userSuccess then
-                    task.spawn(userSuccess, key)
-                end
-            end
-            launchKeyOptions.OnSuccessComplete = function(key)
-                if userComplete then
-                    task.spawn(userComplete, key)
-                end
-                self:Show()
-                if type(options.OnReady) == "function" then
-                    task.spawn(options.OnReady, key)
-                end
-            end
-
-            self:CreateKeySystem(launchKeyOptions)
+    local function startKeySystem()
+        if not useKeySystem then
+            finishBoot(nil)
+            return
         end
 
-        self:CreateLoadingScreen(loadingOptions)
-    else
         local launchKeyOptions = table.clone(keyOptions)
+        local userSuccess = launchKeyOptions.OnSuccess
         local userComplete = launchKeyOptions.OnSuccessComplete
+
         launchKeyOptions.AutoDestroyOnValid = true
+        launchKeyOptions.OnSuccess = function(key)
+            if userSuccess then
+                task.spawn(userSuccess, key)
+            end
+        end
         launchKeyOptions.OnSuccessComplete = function(key)
             if userComplete then
                 task.spawn(userComplete, key)
             end
-            self:Show()
-            if type(options.OnReady) == "function" then
-                task.spawn(options.OnReady, key)
-            end
+            finishBoot(key)
         end
+
         self:CreateKeySystem(launchKeyOptions)
+    end
+
+    if useLoading then
+        loadingOptions = table.clone(loadingOptions)
+        loadingOptions.OnComplete = startKeySystem
+        self:CreateLoadingScreen(loadingOptions)
+    else
+        startKeySystem()
     end
 
     return self
