@@ -4775,6 +4775,7 @@ function Library:Launch(options)
     options = options or {}
 
     self:Hide()
+    window.Visible = false
 
     local loadingOptions = options.LoadingScreen or {}
     local keyOptions = options.KeySystem or {}
