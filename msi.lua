@@ -4317,6 +4317,7 @@ end)
 ----------------------------------------------------------------
 
 local lastKeySystem = nil
+Library._motdRecent = Library._motdRecent or {}
 
 function Library:CreateKeySystem(options)
     options = options or {}
@@ -4330,7 +4331,7 @@ function Library:CreateKeySystem(options)
     }
 
     local keyLink = options.KeyLink or "https://your-key-link-here.com"
-    local backgroundImage = options.BackgroundImage or "rbxassetid://78464903954782"
+    local backgroundImage = options.BackgroundImage or "rbxassetid://90077486395276"
     local kickMessage = options.KickMessage or "Invalid key. Please get a new key and try again."
     local blurSizeOnFail = options.BlurSizeOnFail or 28
     local kickDelay = options.KickDelay or 1.5
@@ -4388,7 +4389,7 @@ function Library:CreateKeySystem(options)
     panel.AnchorPoint = Vector2.new(0.5, 0.5)
     panel.Position = UDim2.fromScale(0.5, 0.5)
     panel.Size = UDim2.fromOffset(580, 300)
-    panel.BackgroundColor3 = THEME.Background
+    panel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     panel.BackgroundTransparency = 1
     panel.BorderSizePixel = 0
     panel.ClipsDescendants = true
@@ -4396,34 +4397,41 @@ function Library:CreateKeySystem(options)
     panel.Parent = backdrop
     corner(panel, WINDOW_RADIUS or 14)
     local panelStroke = stroke(panel, THEME.Accent, 1.5, 1)
+    local panelImage = nil
 
-    local panelGradient = Instance.new("UIGradient")
-    panelGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(10, 5, 20)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(15, 8, 30)),
-        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(20, 10, 40)),
-    })
-    panelGradient.Rotation = 90
-    panelGradient.Parent = panel
+    -- Clip layer so background art respects rounded corners
+    local artClip = Instance.new("Frame")
+    artClip.Name = "ArtClip"
+    artClip.Size = UDim2.fromScale(1, 1)
+    artClip.BackgroundTransparency = 1
+    artClip.ClipsDescendants = true
+    artClip.BorderSizePixel = 0
+    artClip.ZIndex = 3
+    artClip.Parent = panel
+    corner(artClip, WINDOW_RADIUS or 14)
 
-    local panelImage = Instance.new("ImageLabel")
-    panelImage.Name = "PanelBackgroundImage"
-    panelImage.Size = UDim2.fromScale(1, 1)
-    panelImage.BackgroundTransparency = 1
-    panelImage.Image = backgroundImage
-    panelImage.ImageTransparency = 1
-    panelImage.ScaleType = Enum.ScaleType.Crop
-    panelImage.ZIndex = 3
-    panelImage.Parent = panel
+    -- MSI.LUA mark behind profile + key form
+    local dragonImage = Instance.new("ImageLabel")
+    dragonImage.Name = "BackgroundLogo"
+    dragonImage.AnchorPoint = Vector2.new(0.5, 0.5)
+    dragonImage.Position = UDim2.fromScale(0.5, 0.58)
+    dragonImage.Size = UDim2.fromOffset(420, 140)
+    dragonImage.BackgroundTransparency = 1
+    dragonImage.Image = "rbxassetid://90077486395276"
+    dragonImage.ImageTransparency = 1
+    dragonImage.ScaleType = Enum.ScaleType.Fit
+    dragonImage.ZIndex = 3
+    dragonImage.Parent = artClip
 
     local panelTint = Instance.new("Frame")
     panelTint.Name = "PanelTint"
     panelTint.Size = UDim2.fromScale(1, 1)
-    panelTint.BackgroundColor3 = THEME.Background
+    panelTint.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     panelTint.BackgroundTransparency = 1
     panelTint.BorderSizePixel = 0
     panelTint.ZIndex = 4
     panelTint.Parent = panel
+    corner(panelTint, WINDOW_RADIUS or 14)
 
     -- Header strip
     local headerBar = Instance.new("Frame")
@@ -4442,29 +4450,76 @@ function Library:CreateKeySystem(options)
     headerLine.ZIndex = 7
     headerLine.Parent = headerBar
 
-    -- Same MSI.LUA wordmark as main menu header
-    local logoLabel = Instance.new("ImageLabel")
-    logoLabel.BackgroundTransparency = 1
-    logoLabel.Position = UDim2.fromOffset(14, 8)
-    logoLabel.Size = UDim2.fromOffset(130, 36)
-    logoLabel.Image = "rbxassetid://118298605561190"
-    logoLabel.ImageTransparency = 1
-    logoLabel.ScaleType = Enum.ScaleType.Fit
-    logoLabel.ZIndex = 7
-    logoLabel.Parent = headerBar
+    -- Random MOTD (user supplies list via options.MOTD)
+    local defaultMotds = options.MOTD or options.Motd or {
+        "Welcome to MSI.LUA",
+        "Stay safe out there.",
+        "Config. Crush. Repeat.",
+        "Purple never goes out of style.",
+        "One key to rule them all.",
+        "Built different.",
+        "Load in. Lock in.",
+        "Your move.",
+        "Fresh session, fresh aim.",
+        "MSI is watching... kindly.",
+    }
 
-    local headerSub = Instance.new("TextLabel")
-    headerSub.BackgroundTransparency = 1
-    headerSub.Position = UDim2.fromOffset(150, 0)
-    headerSub.Size = UDim2.new(0, 140, 1, 0)
-    headerSub.Text = "KEY SYSTEM"
-    headerSub.TextColor3 = THEME.TextDim
-    headerSub.Font = Enum.Font.Gotham
-    headerSub.TextSize = 11
-    headerSub.TextXAlignment = Enum.TextXAlignment.Left
-    headerSub.TextTransparency = 1
-    headerSub.ZIndex = 7
-    headerSub.Parent = headerBar
+    local function pickMotd(list, recent, maxRecent)
+        if type(list) ~= "table" or #list == 0 then
+            return "Welcome to MSI.LUA"
+        end
+        maxRecent = math.min(maxRecent or 12, math.max(0, #list - 1))
+        recent = recent or {}
+
+        local pool = {}
+        for _, msg in ipairs(list) do
+            local used = false
+            for _, r in ipairs(recent) do
+                if r == msg then used = true; break end
+            end
+            if not used then
+                table.insert(pool, msg)
+            end
+        end
+        if #pool == 0 then
+            -- all seen recently — allow repeats, reset history
+            for _, msg in ipairs(list) do
+                table.insert(pool, msg)
+            end
+            for i = #recent, 1, -1 do recent[i] = nil end
+        end
+
+        local choice = pool[math.random(1, #pool)]
+        table.insert(recent, 1, choice)
+        while #recent > maxRecent do
+            table.remove(recent)
+        end
+        return choice
+    end
+
+    Library._motdRecent = Library._motdRecent or {}
+    local motdText = pickMotd(defaultMotds, Library._motdRecent, options.MotdHistory or 12)
+
+    -- Header MOTD only: "MOTD: <message>"
+    local motdLabel = Instance.new("TextLabel")
+    motdLabel.Name = "MOTD"
+    motdLabel.BackgroundTransparency = 1
+    motdLabel.Position = UDim2.fromOffset(18, 0)
+    motdLabel.Size = UDim2.new(1, -60, 1, 0)
+    motdLabel.RichText = true
+    motdLabel.Text = string.format(
+        '<font color="#B450FF">MOTD:</font> <font color="#E8DCF8">%s</font>',
+        motdText:gsub("[<>&]", "")
+    )
+    motdLabel.TextColor3 = THEME.TextPrimary
+    motdLabel.Font = Enum.Font.Gotham
+    motdLabel.TextSize = 13
+    motdLabel.TextXAlignment = Enum.TextXAlignment.Left
+    motdLabel.TextYAlignment = Enum.TextYAlignment.Center
+    motdLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    motdLabel.TextTransparency = 0
+    motdLabel.ZIndex = 10
+    motdLabel.Parent = headerBar
 
     local closeButton = Instance.new("TextButton")
     closeButton.Name = "CloseButton"
@@ -4839,7 +4894,12 @@ function Library:CreateKeySystem(options)
             Position = UDim2.fromScale(0.5, 0.48),
         }):Play()
         TweenService:Create(panelStroke, panelFade, { Transparency = 1 }):Play()
-        TweenService:Create(panelImage, panelFade, { ImageTransparency = 1 }):Play()
+        if panelImage then
+            TweenService:Create(panelImage, panelFade, { ImageTransparency = 1 }):Play()
+        end
+        if dragonImage then
+            TweenService:Create(dragonImage, panelFade, { ImageTransparency = 1 }):Play()
+        end
         TweenService:Create(panelTint, panelFade, { BackgroundTransparency = 1 }):Play()
 
         for _, desc in ipairs(panel:GetDescendants()) do
@@ -5016,11 +5076,14 @@ function Library:CreateKeySystem(options)
             Size = UDim2.fromOffset(580, 300),
         }):Play()
         TweenService:Create(panelStroke, fadeIn, { Transparency = 0.3 }):Play()
-        TweenService:Create(panelImage, fadeIn, { ImageTransparency = 0.82 }):Play()
-        TweenService:Create(panelTint, fadeIn, { BackgroundTransparency = 0.35 }):Play()
+        TweenService:Create(panelTint, fadeIn, { BackgroundTransparency = 0.2 }):Play()
+        if dragonImage then
+            TweenService:Create(dragonImage, fadeIn, { ImageTransparency = 0.75 }):Play()
+        end
         TweenService:Create(headerLine, fadeIn, { BackgroundTransparency = 0.4 }):Play()
-        TweenService:Create(logoLabel, fadeIn, { ImageTransparency = 0 }):Play()
-        TweenService:Create(headerSub, fadeIn, { TextTransparency = 0 }):Play()
+        if motdLabel then
+            TweenService:Create(motdLabel, fadeIn, { TextTransparency = 0 }):Play()
+        end
         TweenService:Create(blur, TweenInfo.new(0.5), { Size = 10 }):Play()
     end)
 
