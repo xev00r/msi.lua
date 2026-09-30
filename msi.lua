@@ -1751,6 +1751,7 @@ end
 local keybindRegistry = {}
 local keybindListEnabled = false
 local setKeybindListVisible
+local keybindListening = false
 local toggleKey = Enum.KeyCode.Insert
 
 local function keyName(key)
@@ -1802,6 +1803,7 @@ local function createKeybindRow(card, order, label, defaultKey, options)
     btn.MouseButton1Click:Connect(function()
         if listening then return end
         listening = true
+        keybindListening = true
         btn.Text = "..."
         btn.TextColor3 = THEME.Accent
 
@@ -1813,6 +1815,7 @@ local function createKeybindRow(card, order, label, defaultKey, options)
                 btn.Text = tostring(inp.KeyCode):gsub("Enum.KeyCode.","")
                 btn.TextColor3 = THEME.TextPrimary
                 listening = false
+                keybindListening = false
                 conn:Disconnect()
                 for _, cb in ipairs(callbacks) do task.spawn(cb, currentKey) end
             elseif inp.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1820,6 +1823,7 @@ local function createKeybindRow(card, order, label, defaultKey, options)
                 btn.Text = "None"
                 btn.TextColor3 = THEME.TextMuted
                 listening = false
+                keybindListening = false
                 conn:Disconnect()
                 for _, cb in ipairs(callbacks) do task.spawn(cb, nil) end
             end
@@ -1855,6 +1859,18 @@ local function createKeybindRow(card, order, label, defaultKey, options)
     return comp
 end
 
+local function createMenuKeybindRow(card, order, label, defaultKey, options)
+    local initialKey = defaultKey or toggleKey
+    local comp = createKeybindRow(card, order, label or "Menu key", initialKey, options)
+
+    comp:onChange(function(newKey)
+        toggleKey = newKey
+    end)
+
+    toggleKey = initialKey
+    return comp
+end
+
 local function createLabelRow(card, order, textValue, options)
     options = options or {}
     local wrap = options.wrap ~= false  -- descriptions wrap by default
@@ -1876,9 +1892,11 @@ local function createLabelRow(card, order, textValue, options)
     label.Size = UDim2.new(1, 0, 0, height)
     label.BackgroundTransparency = 1
     label.Text = textValue or ""
-    label.TextColor3 = options.color or THEME.TextMuted
+    label.TextColor3 = options.color or THEME.TextPrimary
     label.Font = options.bold and Enum.Font.GothamBold or Enum.Font.Gotham
     label.TextSize = size
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.TextStrokeTransparency = options.strokeTransparency or 0.72
     label.TextXAlignment = options.align or Enum.TextXAlignment.Left
     label.TextYAlignment = Enum.TextYAlignment.Top
     label.TextWrapped = wrap
@@ -3357,6 +3375,15 @@ function Library:SetKeybindListVisible(value)
     end
 end
 
+function Library:SetMenuKeybind(key)
+    toggleKey = key
+    return toggleKey
+end
+
+function Library:GetMenuKeybind()
+    return toggleKey
+end
+
 function Library:Notify(title, text, ntype, duration)
     return notify(title, text, ntype, duration)
 end
@@ -3509,6 +3536,41 @@ function Library:_createSection(tab, name, side, options)
             defaultKey,
             opts
         )
+        table.insert(self._components, comp)
+        return comp
+    end
+
+    function section:CreateMenuKeybind(label, defaultKey, opts)
+        local comp = createMenuKeybindRow(
+            self._card,
+            self:_nextOrder(),
+            label or "Menu key",
+            defaultKey,
+            opts
+        )
+        table.insert(self._components, comp)
+        return comp
+    end
+
+    function section:CreateKeybindListToggle(label, default, opts)
+        local comp = createToggleRow(
+            self._card,
+            self:_nextOrder(),
+            label or "Show keybind list",
+            default == true,
+            opts
+        )
+
+        comp:onChange(function(value)
+            if setKeybindListVisible then
+                setKeybindListVisible(value)
+            end
+        end)
+
+        if setKeybindListVisible then
+            setKeybindListVisible(default == true)
+        end
+
         table.insert(self._components, comp)
         return comp
     end
@@ -3707,6 +3769,22 @@ function Library:_installTabMethods(tab)
         return ensureDefaultSection(self):CreateKeybind(
             label,
             defaultKey,
+            opts
+        )
+    end
+
+    function tab:CreateMenuKeybind(label, defaultKey, opts)
+        return ensureDefaultSection(self):CreateMenuKeybind(
+            label or "Menu key",
+            defaultKey,
+            opts
+        )
+    end
+
+    function tab:CreateKeybindListToggle(label, default, opts)
+        return ensureDefaultSection(self):CreateKeybindListToggle(
+            label or "Show keybind list",
+            default,
             opts
         )
     end
@@ -4019,7 +4097,8 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
         return
     end
 
-    if inp.UserInputType == Enum.UserInputType.Keyboard
+    if not keybindListening
+        and inp.UserInputType == Enum.UserInputType.Keyboard
         and inp.KeyCode == toggleKey then
         toggleMenu()
     end
@@ -4091,9 +4170,11 @@ wmText.Size = UDim2.fromOffset(0, 20)
 wmText.AutomaticSize = Enum.AutomaticSize.X
 wmText.BackgroundTransparency = 1
 wmText.TextColor3 = THEME.TextPrimary
-wmText.Font = Enum.Font.Gotham
-wmText.TextSize = 11
+wmText.Font = Enum.Font.GothamMedium
+wmText.TextSize = 12
 wmText.TextXAlignment = Enum.TextXAlignment.Left
+wmText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+wmText.TextStrokeTransparency = 0.7
 wmText.ZIndex = 121
 wmText.Parent = watermark
 
@@ -4215,9 +4296,7 @@ local function rebuildKeybindList()
         return a.label:lower() < b.label:lower()
     end)
 
-    keybindListHost.Visible =
-        keybindListEnabled
-        and #entries > 0
+    keybindListHost.Visible = keybindListEnabled and #entries > 0
 
     if not keybindListHost.Visible then
         return
@@ -4226,49 +4305,60 @@ local function rebuildKeybindList()
     for i, item in ipairs(entries) do
         local row = Instance.new("Frame")
         row.LayoutOrder = i
-        row.Size = UDim2.new(1, 0, 0, 24)
+        row.Size = UDim2.new(1, 0, 0, 28)
         row.BackgroundTransparency = 1
         row.ZIndex = 131
         row.Parent = keybindListHost
 
         local name = Instance.new("TextLabel")
         name.BackgroundTransparency = 1
-        name.Size = UDim2.new(1, -88, 1, 0)
+        name.Size = UDim2.new(1, -98, 1, 0)
         name.Text = item.label
         name.TextColor3 = THEME.TextPrimary
-        name.Font = Enum.Font.Gotham
-        name.TextSize = 11
+        name.Font = Enum.Font.GothamMedium
+        name.TextSize = 12
         name.TextXAlignment = Enum.TextXAlignment.Left
+        name.TextYAlignment = Enum.TextYAlignment.Center
+        name.TextTruncate = Enum.TextTruncate.AtEnd
+        name.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        name.TextStrokeTransparency = 0.7
         name.ZIndex = 132
         name.Parent = row
 
         local mode = Instance.new("TextLabel")
         mode.AnchorPoint = Vector2.new(1, 0.5)
-        mode.Position = UDim2.new(1, -48, 0.5, 0)
-        mode.Size = UDim2.fromOffset(40, 16)
+        mode.Position = UDim2.new(1, -52, 0.5, 0)
+        mode.Size = UDim2.fromOffset(44, 17)
         mode.BackgroundTransparency = 1
         mode.Text = item.mode
-        mode.TextColor3 = THEME.TextDim
+        mode.TextColor3 = THEME.TextMuted
         mode.Font = Enum.Font.Gotham
-        mode.TextSize = 9
+        mode.TextSize = 10
         mode.TextXAlignment = Enum.TextXAlignment.Right
+        mode.TextYAlignment = Enum.TextYAlignment.Center
+        mode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        mode.TextStrokeTransparency = 0.7
         mode.ZIndex = 132
         mode.Parent = row
 
         local key = Instance.new("TextLabel")
         key.AnchorPoint = Vector2.new(1, 0.5)
         key.Position = UDim2.new(1, 0, 0.5, 0)
-        key.Size = UDim2.fromOffset(42, 20)
-        key.BackgroundColor3 = THEME.PanelAlt
+        key.Size = UDim2.fromOffset(46, 22)
+        key.BackgroundColor3 = Color3.fromRGB(8, 5, 15)
+        key.BackgroundTransparency = 0.05
         key.Text = keyName(item.key)
         key.TextColor3 = THEME.AccentLight
         key.Font = Enum.Font.GothamBold
         key.TextSize = 10
         key.TextXAlignment = Enum.TextXAlignment.Center
+        key.TextYAlignment = Enum.TextYAlignment.Center
+        key.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        key.TextStrokeTransparency = 0.65
         key.ZIndex = 133
         key.Parent = row
-        corner(key, 6)
-        stroke(key, THEME.Accent, 1, 0.45)
+        corner(key, 7)
+        stroke(key, THEME.Accent, 1, 0.28)
     end
 end
 
@@ -4276,39 +4366,68 @@ keybindListHost = Instance.new("Frame")
 keybindListHost.Name = "KeybindList"
 keybindListHost.AnchorPoint = Vector2.new(1, 0)
 keybindListHost.Position = UDim2.new(1, -12, 0, 48)
-keybindListHost.Size = UDim2.fromOffset(220, 0)
+keybindListHost.Size = UDim2.fromOffset(236, 0)
 keybindListHost.AutomaticSize = Enum.AutomaticSize.Y
-keybindListHost.BackgroundColor3 = THEME.Card
-keybindListHost.BackgroundTransparency = 0.12
+keybindListHost.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+keybindListHost.BackgroundTransparency = 0.06
 keybindListHost.Visible = false
 keybindListHost.ZIndex = 130
 keybindListHost.Parent = screenGui
-corner(keybindListHost, 10)
-stroke(keybindListHost, THEME.Accent, 1, 0.35)
-
-local kbTitle = Instance.new("TextLabel")
-kbTitle.Name = "Title"
-kbTitle.Size = UDim2.new(1, 0, 0, 24)
-kbTitle.BackgroundTransparency = 1
-kbTitle.Text = "KEYBINDS"
-kbTitle.TextColor3 = THEME.Accent
-kbTitle.Font = Enum.Font.GothamBold
-kbTitle.TextSize = 11
-kbTitle.TextXAlignment = Enum.TextXAlignment.Left
-kbTitle.ZIndex = 131
-kbTitle.Parent = keybindListHost
+corner(keybindListHost, 9)
+stroke(keybindListHost, THEME.Accent, 1, 0.42)
 
 local kbPad = Instance.new("UIPadding")
 kbPad.PaddingTop = UDim.new(0, 7)
-kbPad.PaddingBottom = UDim.new(0, 7)
-kbPad.PaddingLeft = UDim.new(0, 10)
-kbPad.PaddingRight = UDim.new(0, 10)
+kbPad.PaddingBottom = UDim.new(0, 8)
+kbPad.PaddingLeft = UDim.new(0, 9)
+kbPad.PaddingRight = UDim.new(0, 9)
 kbPad.Parent = keybindListHost
 
 local kbLayout = Instance.new("UIListLayout")
 kbLayout.SortOrder = Enum.SortOrder.LayoutOrder
 kbLayout.Padding = UDim.new(0, 2)
 kbLayout.Parent = keybindListHost
+
+local kbTitle = Instance.new("Frame")
+kbTitle.Name = "Title"
+kbTitle.LayoutOrder = 0
+kbTitle.Size = UDim2.new(1, 0, 0, 26)
+kbTitle.BackgroundTransparency = 1
+kbTitle.ZIndex = 131
+kbTitle.Parent = keybindListHost
+
+local kbDragon = Instance.new("ImageLabel")
+kbDragon.Size = UDim2.fromOffset(20, 20)
+kbDragon.Position = UDim2.fromOffset(0, 3)
+kbDragon.BackgroundTransparency = 1
+kbDragon.Image = "rbxassetid://78464903954782"
+kbDragon.ScaleType = Enum.ScaleType.Fit
+kbDragon.ZIndex = 132
+kbDragon.Parent = kbTitle
+
+local kbDivider = Instance.new("Frame")
+kbDivider.Size = UDim2.fromOffset(1, 15)
+kbDivider.Position = UDim2.fromOffset(26, 6)
+kbDivider.BackgroundColor3 = THEME.Accent
+kbDivider.BackgroundTransparency = 0.2
+kbDivider.BorderSizePixel = 0
+kbDivider.ZIndex = 132
+kbDivider.Parent = kbTitle
+
+local kbTitleLabel = Instance.new("TextLabel")
+kbTitleLabel.Position = UDim2.fromOffset(34, 0)
+kbTitleLabel.Size = UDim2.new(1, -34, 1, 0)
+kbTitleLabel.BackgroundTransparency = 1
+kbTitleLabel.Text = "KEYBINDS"
+kbTitleLabel.TextColor3 = THEME.TextPrimary
+kbTitleLabel.Font = Enum.Font.GothamBold
+kbTitleLabel.TextSize = 12
+kbTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+kbTitleLabel.TextYAlignment = Enum.TextYAlignment.Center
+kbTitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+kbTitleLabel.TextStrokeTransparency = 0.65
+kbTitleLabel.ZIndex = 132
+kbTitleLabel.Parent = kbTitle
 
 setKeybindListVisible = function(value)
     keybindListEnabled = value == true
@@ -5422,6 +5541,14 @@ Library.CreateKeybind = function(section, label, defaultKey, options)
     return section:CreateKeybind(label, defaultKey, options)
 end
 
+Library.CreateMenuKeybind = function(section, label, defaultKey, options)
+    return section:CreateMenuKeybind(label, defaultKey, options)
+end
+
+Library.CreateKeybindListToggle = function(section, label, default, options)
+    return section:CreateKeybindListToggle(label, default, options)
+end
+
 Library.CreateKeybindCombo = function(
     section,
     label,
@@ -5492,6 +5619,19 @@ end
 
 Library.GetKeybindList = function()
     return keybindListHost
+end
+
+Library.SetMenuKeybind = function(key)
+    toggleKey = key
+    return toggleKey
+end
+
+Library.GetMenuKeybind = function()
+    return toggleKey
+end
+
+Library.IsKeybindListVisible = function()
+    return keybindListEnabled == true and keybindListHost and keybindListHost.Visible == true
 end
 
 Library.Start = function(options)
