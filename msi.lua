@@ -1144,6 +1144,7 @@ local function createCard(parent, title, order)
 
     if title then
         local t = Instance.new("TextLabel")
+        t.Name = "CardTitle"
         t.LayoutOrder           = 0
         t.BackgroundTransparency = 1
         t.Size                  = UDim2.new(1, 0, 0, 16)
@@ -1856,20 +1857,47 @@ end
 
 local function createLabelRow(card, order, textValue, options)
     options = options or {}
+    local wrap = options.wrap ~= false  -- descriptions wrap by default
+    local size = options.size or 12
+    local height = options.height
+    if not height then
+        -- rough auto height for wrapped text
+        local len = #(textValue or "")
+        if wrap and len > 48 then
+            height = math.clamp(18 + math.floor(len / 42) * 14, 22, 72)
+        else
+            height = 22
+        end
+    end
+
     local label = Instance.new("TextLabel")
+    label.Name = "Label"
     label.LayoutOrder = order
-    label.Size = UDim2.new(1, 0, 0, options.height or 22)
+    label.Size = UDim2.new(1, 0, 0, height)
     label.BackgroundTransparency = 1
     label.Text = textValue or ""
     label.TextColor3 = options.color or THEME.TextMuted
     label.Font = options.bold and Enum.Font.GothamBold or Enum.Font.Gotham
-    label.TextSize = options.size or 12
+    label.TextSize = size
     label.TextXAlignment = options.align or Enum.TextXAlignment.Left
-    label.TextYAlignment = Enum.TextYAlignment.Center
-    label.TextWrapped = options.wrap or false
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.TextWrapped = wrap
+    label.RichText = options.rich == true
     label.ZIndex = 3
     label.Parent = card
-    return label
+
+    return {
+        row = label,
+        set = function(v)
+            label.Text = tostring(v or "")
+        end,
+        get = function()
+            return label.Text
+        end,
+        destroy = function()
+            label:Destroy()
+        end,
+    }
 end
 
 local function createTextBoxRow(card, order, labelText, placeholder, defaultText, options)
@@ -2189,30 +2217,33 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     hexLabel.ZIndex = 4
     hexLabel.Parent = preview
 
+    local h, s, v = defaultColor:ToHSV()
     local currentColor = defaultColor
     local callbacks = {}
     local originalCardZ = card.ZIndex
     local originalRowZ = row.ZIndex
     local popupOpen = false
+    local wheelDragging = false
+    local valDragging = false
 
-    -- Popup is parented to screenGui so Sibling ZIndex cannot bury it under later rows
+    -- Popup (Dollarware-style wheel, MSI theme)
     local popup = Instance.new("Frame")
     popup.Name = "ColorPopup"
     popup.AnchorPoint = Vector2.new(1, 0)
-    popup.Size = UDim2.fromOffset(250, 300)
+    popup.Size = UDim2.fromOffset(236, 268)
     popup.BackgroundColor3 = THEME.PanelAlt
     popup.Visible = false
     popup.ZIndex = 500
-    popup.ClipsDescendants = false
+    popup.ClipsDescendants = true
     popup.Parent = screenGui
-    corner(popup, 10)
-    stroke(popup, THEME.Accent, 1, 0.35)
+    corner(popup, 12)
+    stroke(popup, THEME.Accent, 1.2, 0.3)
 
     local popupTitle = Instance.new("TextLabel")
     popupTitle.BackgroundTransparency = 1
-    popupTitle.Position = UDim2.fromOffset(10, 7)
-    popupTitle.Size = UDim2.new(1, -20, 0, 18)
-    popupTitle.Text = "Color picker"
+    popupTitle.Position = UDim2.fromOffset(12, 8)
+    popupTitle.Size = UDim2.new(1, -24, 0, 18)
+    popupTitle.Text = label
     popupTitle.TextColor3 = THEME.TextPrimary
     popupTitle.Font = Enum.Font.GothamBold
     popupTitle.TextSize = 12
@@ -2220,238 +2251,117 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     popupTitle.ZIndex = 501
     popupTitle.Parent = popup
 
-    local livePreview = Instance.new("Frame")
-    livePreview.Position = UDim2.fromOffset(10, 30)
-    livePreview.Size = UDim2.new(1, -20, 0, 54)
-    livePreview.BackgroundColor3 = currentColor
-    livePreview.ZIndex = 501
-    livePreview.Parent = popup
-    corner(livePreview, 8)
-    stroke(livePreview, THEME.AccentLight, 1, 0.35)
+    local titleLine = Instance.new("Frame")
+    titleLine.Position = UDim2.fromOffset(0, 30)
+    titleLine.Size = UDim2.new(1, 0, 0, 1)
+    titleLine.BackgroundColor3 = THEME.Accent
+    titleLine.BackgroundTransparency = 0.55
+    titleLine.BorderSizePixel = 0
+    titleLine.ZIndex = 501
+    titleLine.Parent = popup
 
-    local liveHex = Instance.new("TextLabel")
-    liveHex.BackgroundTransparency = 1
-    liveHex.AnchorPoint = Vector2.new(0.5, 0.5)
-    liveHex.Position = UDim2.fromScale(0.5, 0.5)
-    liveHex.Size = UDim2.new(1, -12, 1, 0)
-    liveHex.Text = toHex(currentColor)
-    liveHex.TextColor3 = THEME.White
-    liveHex.Font = Enum.Font.GothamBold
-    liveHex.TextSize = 12
-    liveHex.ZIndex = 502
-    liveHex.Parent = livePreview
+    -- Circular HSV wheel (Dollarware asset)
+    local wheelFrame = Instance.new("Frame")
+    wheelFrame.Position = UDim2.fromOffset(14, 42)
+    wheelFrame.Size = UDim2.fromOffset(160, 160)
+    wheelFrame.BackgroundTransparency = 1
+    wheelFrame.ZIndex = 501
+    wheelFrame.Parent = popup
 
-    local function fireColorChanged()
-        for _, cb in ipairs(callbacks) do
-            task.spawn(cb, currentColor)
-        end
-    end
+    local wheel = Instance.new("ImageLabel")
+    wheel.Name = "Wheel"
+    wheel.Size = UDim2.fromScale(1, 1)
+    wheel.BackgroundTransparency = 1
+    wheel.Image = "rbxassetid://9801454501"
+    wheel.ScaleType = Enum.ScaleType.Fit
+    wheel.ZIndex = 501
+    wheel.Parent = wheelFrame
 
-    local function setColor(c, fire)
-        currentColor = c
-        preview.BackgroundColor3 = c
-        hexLabel.Text = toHex(c)
-        livePreview.BackgroundColor3 = c
-        liveHex.Text = toHex(c)
-        if fire then
-            fireColorChanged()
-        end
-    end
+    local cursor = Instance.new("Frame")
+    cursor.Name = "Cursor"
+    cursor.AnchorPoint = Vector2.new(0.5, 0.5)
+    cursor.Size = UDim2.fromOffset(12, 12)
+    cursor.BackgroundColor3 = THEME.White
+    cursor.BorderSizePixel = 0
+    cursor.ZIndex = 503
+    cursor.Parent = wheelFrame
+    corner(cursor, 6)
+    stroke(cursor, Color3.fromRGB(0, 0, 0), 1.5, 0.2)
 
-    local function channelValue(c, channel)
-        if channel == "R" then return math.floor(c.R * 255 + 0.5) end
-        if channel == "G" then return math.floor(c.G * 255 + 0.5) end
-        return math.floor(c.B * 255 + 0.5)
-    end
+    local cursorInner = Instance.new("Frame")
+    cursorInner.AnchorPoint = Vector2.new(0.5, 0.5)
+    cursorInner.Position = UDim2.fromScale(0.5, 0.5)
+    cursorInner.Size = UDim2.fromOffset(6, 6)
+    cursorInner.BackgroundColor3 = defaultColor
+    cursorInner.BorderSizePixel = 0
+    cursorInner.ZIndex = 504
+    cursorInner.Parent = cursor
+    corner(cursorInner, 3)
 
-    local function composeColor(channel, value)
-        local r = math.floor(currentColor.R * 255 + 0.5)
-        local g = math.floor(currentColor.G * 255 + 0.5)
-        local b = math.floor(currentColor.B * 255 + 0.5)
-        if channel == "R" then r = value end
-        if channel == "G" then g = value end
-        if channel == "B" then b = value end
-        return Color3.fromRGB(r, g, b)
-    end
+    -- Value (brightness) slider on the right
+    local valTrack = Instance.new("Frame")
+    valTrack.Position = UDim2.fromOffset(188, 42)
+    valTrack.Size = UDim2.fromOffset(16, 160)
+    valTrack.BackgroundColor3 = THEME.Panel
+    valTrack.BorderSizePixel = 0
+    valTrack.ZIndex = 501
+    valTrack.Parent = popup
+    corner(valTrack, 6)
+    stroke(valTrack, THEME.Accent, 1, 0.45)
 
-    local sliderRefs = {}
+    local valGradient = Instance.new("UIGradient")
+    valGradient.Rotation = 90
+    valGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromHSV(h, s, 1)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0)),
+    })
+    valGradient.Parent = valTrack
 
-    local function updateTrackGradient(ref)
-        local c = currentColor
-        local other = ref.name == "R" and Color3.new(0, c.G, c.B)
-            or ref.name == "G" and Color3.new(c.R, 0, c.B)
-            or Color3.new(c.R, c.G, 0)
-        local full = ref.name == "R" and Color3.new(1, c.G, c.B)
-            or ref.name == "G" and Color3.new(c.R, 1, c.B)
-            or Color3.new(c.R, c.G, 1)
-        ref.gradient.Color = ColorSequence.new(other, full)
-    end
+    local valKnob = Instance.new("Frame")
+    valKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+    valKnob.Size = UDim2.fromOffset(18, 8)
+    valKnob.BackgroundColor3 = THEME.White
+    valKnob.BorderSizePixel = 0
+    valKnob.ZIndex = 503
+    valKnob.Parent = valTrack
+    corner(valKnob, 3)
+    stroke(valKnob, THEME.Accent, 1, 0.2)
 
-    local function setSliderValue(ref, value, fire)
-        value = math.clamp(math.floor(value + 0.5), 0, 255)
-        local alpha = value / 255
-        ref.valueLabel.Text = tostring(value)
-        ref.fill.Size = UDim2.new(alpha, 0, 1, 0)
-        ref.knob.Position = UDim2.new(alpha, 0, 0.5, 0)
-        if fire then
-            setColor(composeColor(ref.name, value), true)
-            for _, other in ipairs(sliderRefs) do
-                if other ~= ref then
-                    local v = channelValue(currentColor, other.name)
-                    setSliderValue(other, v, false)
-                end
-            end
-            for _, other in ipairs(sliderRefs) do
-                updateTrackGradient(other)
-            end
-        end
-    end
+    -- RGB readouts
+    local infoRow = Instance.new("Frame")
+    infoRow.Position = UDim2.fromOffset(12, 214)
+    infoRow.Size = UDim2.new(1, -24, 0, 20)
+    infoRow.BackgroundTransparency = 1
+    infoRow.ZIndex = 501
+    infoRow.Parent = popup
 
-    local channelData = {
-        {name = "R", y = 98},
-        {name = "G", y = 139},
-        {name = "B", y = 180},
-    }
+    local rgbLabel = Instance.new("TextLabel")
+    rgbLabel.BackgroundTransparency = 1
+    rgbLabel.Size = UDim2.new(0.55, 0, 1, 0)
+    rgbLabel.Text = string.format("RGB %d, %d, %d",
+        math.floor(defaultColor.R * 255 + 0.5),
+        math.floor(defaultColor.G * 255 + 0.5),
+        math.floor(defaultColor.B * 255 + 0.5))
+    rgbLabel.TextColor3 = THEME.TextMuted
+    rgbLabel.Font = Enum.Font.Gotham
+    rgbLabel.TextSize = 11
+    rgbLabel.TextXAlignment = Enum.TextXAlignment.Left
+    rgbLabel.ZIndex = 501
+    rgbLabel.Parent = infoRow
 
-    for _, info in ipairs(channelData) do
-        local nameLabel = Instance.new("TextLabel")
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.Position = UDim2.fromOffset(10, info.y)
-        nameLabel.Size = UDim2.fromOffset(16, 16)
-        nameLabel.Text = info.name
-        nameLabel.TextColor3 = THEME.TextPrimary
-        nameLabel.Font = Enum.Font.GothamBold
-        nameLabel.TextSize = 11
-        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-        nameLabel.ZIndex = 501
-        nameLabel.Parent = popup
+    local hexBox = Instance.new("TextLabel")
+    hexBox.BackgroundTransparency = 1
+    hexBox.Position = UDim2.fromScale(0.55, 0)
+    hexBox.Size = UDim2.new(0.45, 0, 1, 0)
+    hexBox.Text = toHex(defaultColor)
+    hexBox.TextColor3 = THEME.AccentLight
+    hexBox.Font = Enum.Font.GothamBold
+    hexBox.TextSize = 12
+    hexBox.TextXAlignment = Enum.TextXAlignment.Right
+    hexBox.ZIndex = 501
+    hexBox.Parent = infoRow
 
-        local valueLabel = Instance.new("TextLabel")
-        valueLabel.AnchorPoint = Vector2.new(1, 0)
-        valueLabel.Position = UDim2.new(1, -10, 0, info.y)
-        valueLabel.Size = UDim2.fromOffset(32, 16)
-        valueLabel.BackgroundTransparency = 1
-        valueLabel.TextColor3 = THEME.AccentLight
-        valueLabel.Font = Enum.Font.GothamBold
-        valueLabel.TextSize = 11
-        valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-        valueLabel.ZIndex = 501
-        valueLabel.Parent = popup
-
-        local track = Instance.new("Frame")
-        track.Position = UDim2.fromOffset(28, info.y + 4)
-        track.Size = UDim2.new(1, -78, 0, 8)
-        track.BackgroundColor3 = THEME.Panel
-        track.BorderSizePixel = 0
-        track.ZIndex = 501
-        track.Parent = popup
-        corner(track, 4)
-
-        local gradient = Instance.new("UIGradient")
-        gradient.Parent = track
-
-        local fill = Instance.new("Frame")
-        fill.Size = UDim2.new(0, 0, 1, 0)
-        fill.BackgroundColor3 = THEME.Accent
-        fill.BackgroundTransparency = 0.1
-        fill.BorderSizePixel = 0
-        fill.ZIndex = 502
-        fill.Parent = track
-        corner(fill, 4)
-
-        local knob = Instance.new("TextButton")
-        knob.AnchorPoint = Vector2.new(0.5, 0.5)
-        knob.Size = UDim2.fromOffset(14, 14)
-        knob.BackgroundColor3 = THEME.White
-        knob.AutoButtonColor = false
-        knob.Text = ""
-        knob.ZIndex = 503
-        knob.Parent = track
-        corner(knob, 7)
-        stroke(knob, THEME.Accent, 1, 0.3)
-
-        local ref = {
-            name = info.name,
-            track = track,
-            gradient = gradient,
-            fill = fill,
-            knob = knob,
-            valueLabel = valueLabel,
-        }
-        table.insert(sliderRefs, ref)
-
-        local dragging = false
-        local function updateFromInput(x)
-            local alpha = math.clamp((x - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1), 0, 1)
-            setSliderValue(ref, alpha * 255, true)
-        end
-
-        knob.InputBegan:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
-                    Size = UDim2.fromOffset(18, 18),
-                }):Play()
-            end
-        end)
-
-        track.InputBegan:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-                updateFromInput(inp.Position.X)
-                dragging = true
-                TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
-                    Size = UDim2.fromOffset(18, 18),
-                }):Play()
-            end
-        end)
-
-        UserInputService.InputChanged:Connect(function(inp)
-            if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
-                or inp.UserInputType == Enum.UserInputType.Touch) then
-                updateFromInput(inp.Position.X)
-            end
-        end)
-
-        UserInputService.InputEnded:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-                if dragging then
-                    TweenService:Create(knob, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-                        Size = UDim2.fromOffset(14, 14),
-                    }):Play()
-                end
-                dragging = false
-            end
-        end)
-
-        knob.MouseEnter:Connect(function()
-            TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
-                Size = UDim2.fromOffset(16, 16),
-            }):Play()
-        end)
-        knob.MouseLeave:Connect(function()
-            if not dragging then
-                TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
-                    Size = UDim2.fromOffset(14, 14),
-                }):Play()
-            end
-        end)
-    end
-
-    local presetsLabel = Instance.new("TextLabel")
-    presetsLabel.BackgroundTransparency = 1
-    presetsLabel.Position = UDim2.fromOffset(10, 219)
-    presetsLabel.Size = UDim2.new(1, -20, 0, 16)
-    presetsLabel.Text = "Presets"
-    presetsLabel.TextColor3 = THEME.TextMuted
-    presetsLabel.Font = Enum.Font.Gotham
-    presetsLabel.TextSize = 10
-    presetsLabel.TextXAlignment = Enum.TextXAlignment.Left
-    presetsLabel.ZIndex = 501
-    presetsLabel.Parent = popup
-
+    -- Presets row
     local presets = {
         Color3.fromRGB(255, 80, 80),
         Color3.fromRGB(255, 180, 60),
@@ -2461,44 +2371,133 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         Color3.fromRGB(160, 100, 255),
         Color3.fromRGB(255, 100, 200),
         Color3.fromRGB(240, 240, 240),
-        Color3.fromRGB(100, 100, 100),
-        Color3.fromRGB(30, 30, 30),
     }
 
     local palette = Instance.new("Frame")
     palette.BackgroundTransparency = 1
-    palette.Position = UDim2.fromOffset(10, 238)
-    palette.Size = UDim2.new(1, -20, 0, 50)
+    palette.Position = UDim2.fromOffset(12, 238)
+    palette.Size = UDim2.new(1, -24, 0, 22)
     palette.ZIndex = 501
     palette.Parent = popup
 
-    local grid = Instance.new("UIGridLayout")
-    grid.CellSize = UDim2.fromOffset(34, 22)
-    grid.CellPadding = UDim2.fromOffset(5, 5)
-    grid.Parent = palette
+    local pLayout = Instance.new("UIListLayout")
+    pLayout.FillDirection = Enum.FillDirection.Horizontal
+    pLayout.Padding = UDim.new(0, 5)
+    pLayout.Parent = palette
+
+    local function applyVisuals(notify)
+        currentColor = Color3.fromHSV(h, s, v)
+        preview.BackgroundColor3 = currentColor
+        cursorInner.BackgroundColor3 = currentColor
+        hexLabel.Text = toHex(currentColor)
+        hexBox.Text = toHex(currentColor)
+        rgbLabel.Text = string.format("RGB %d, %d, %d",
+            math.floor(currentColor.R * 255 + 0.5),
+            math.floor(currentColor.G * 255 + 0.5),
+            math.floor(currentColor.B * 255 + 0.5))
+        valGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromHSV(h, s, 1)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 0, 0)),
+        })
+        -- wheel cursor (polar like Dollarware)
+        local theta = (h * math.pi * 2)
+        local radius = 0.5 * s
+        local cx = 0.5 + math.cos(theta) * radius
+        local cy = 0.5 + math.sin(theta) * radius
+        cursor.Position = UDim2.fromScale(cx, cy)
+        valKnob.Position = UDim2.new(0.5, 0, 1 - v, 0)
+
+        if notify then
+            for _, cb in ipairs(callbacks) do
+                task.spawn(cb, currentColor)
+            end
+        end
+    end
+
+    local function setColor(c, notify)
+        if typeof(c) == "table" and c.__type == "Color3" then
+            c = Color3.fromRGB(c.R or 0, c.G or 0, c.B or 0)
+        end
+        if typeof(c) ~= "Color3" then return end
+        h, s, v = c:ToHSV()
+        applyVisuals(notify ~= false)
+    end
+
+    local function setFromWheel(pos)
+        local abs = wheelFrame.AbsolutePosition
+        local size = wheelFrame.AbsoluteSize
+        if size.X <= 0 or size.Y <= 0 then return end
+        local rx = (pos.X - abs.X) / size.X - 0.5
+        local ry = (pos.Y - abs.Y) / size.Y - 0.5
+        local dist = math.sqrt(rx * rx + ry * ry)
+        s = math.clamp(dist * 2, 0, 1)
+        h = (math.atan2(ry, rx) / (math.pi * 2)) % 1
+        applyVisuals(true)
+    end
+
+    local function setFromValue(pos)
+        local abs = valTrack.AbsolutePosition
+        local size = valTrack.AbsoluteSize
+        if size.Y <= 0 then return end
+        local t = math.clamp((pos.Y - abs.Y) / size.Y, 0, 1)
+        v = 1 - t
+        applyVisuals(true)
+    end
+
+    local wheelHit = Instance.new("TextButton")
+    wheelHit.Size = UDim2.fromScale(1, 1)
+    wheelHit.BackgroundTransparency = 1
+    wheelHit.Text = ""
+    wheelHit.ZIndex = 502
+    wheelHit.Parent = wheelFrame
+    wheelHit.MouseButton1Down:Connect(function()
+        wheelDragging = true
+        setFromWheel(UserInputService:GetMouseLocation())
+    end)
+
+    local valHit = Instance.new("TextButton")
+    valHit.Size = UDim2.fromScale(1, 1)
+    valHit.BackgroundTransparency = 1
+    valHit.Text = ""
+    valHit.ZIndex = 502
+    valHit.Parent = valTrack
+    valHit.MouseButton1Down:Connect(function()
+        valDragging = true
+        setFromValue(UserInputService:GetMouseLocation())
+    end)
+
+    UserInputService.InputChanged:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseMovement
+            or inp.UserInputType == Enum.UserInputType.Touch then
+            if wheelDragging then
+                setFromWheel(inp.Position)
+            elseif valDragging then
+                setFromValue(inp.Position)
+            end
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+            wheelDragging = false
+            valDragging = false
+        end
+    end)
 
     for _, c in ipairs(presets) do
         local swatch = Instance.new("TextButton")
+        swatch.Size = UDim2.fromOffset(22, 22)
         swatch.BackgroundColor3 = c
         swatch.AutoButtonColor = false
         swatch.Text = ""
         swatch.ZIndex = 502
         swatch.Parent = palette
         corner(swatch, 6)
+        stroke(swatch, THEME.Accent, 1, 0.55)
         swatch.MouseButton1Click:Connect(function()
             setColor(c, true)
-            for _, ref in ipairs(sliderRefs) do
-                setSliderValue(ref, channelValue(currentColor, ref.name), false)
-                updateTrackGradient(ref)
-            end
         end)
-    end
-
-    for _, ref in ipairs(sliderRefs) do
-        setSliderValue(ref, channelValue(currentColor, ref.name), false)
-    end
-    for _, ref in ipairs(sliderRefs) do
-        updateTrackGradient(ref)
     end
 
     local function positionPopup()
@@ -2507,11 +2506,10 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         local host = screenGui.AbsolutePosition
         local px = abs.X + size.X - host.X
         local py = abs.Y + size.Y + 6 - host.Y
-        -- keep on screen
         local guiSize = screenGui.AbsoluteSize
-        if px < 250 then px = abs.X - host.X + 250 end
-        if py + 300 > guiSize.Y then
-            py = abs.Y - host.Y - 300 - 6
+        if px < 236 then px = abs.X - host.X + 236 end
+        if py + 268 > guiSize.Y then
+            py = abs.Y - host.Y - 268 - 6
         end
         popup.Position = UDim2.fromOffset(px, py)
     end
@@ -2522,6 +2520,8 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         popup.Visible = false
         card.ZIndex = originalCardZ
         row.ZIndex = originalRowZ
+        wheelDragging = false
+        valDragging = false
     end
 
     local function openPopup()
@@ -2532,10 +2532,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         popup.Visible = true
         card.ZIndex = 200
         row.ZIndex = 250
-        for _, ref in ipairs(sliderRefs) do
-            setSliderValue(ref, channelValue(currentColor, ref.name), false)
-            updateTrackGradient(ref)
-        end
+        applyVisuals(false)
     end
 
     local entry = {
@@ -2546,14 +2543,6 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     }
     table.insert(colorPickerRegistry, entry)
 
-    -- Don't close when clicking inside the popup
-    popup.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1
-        or inp.UserInputType == Enum.UserInputType.Touch then
-            -- swallow so global closer doesn't immediately re-close
-        end
-    end)
-
     preview.MouseButton1Click:Connect(function()
         if popupOpen then
             closePopup()
@@ -2562,41 +2551,48 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         end
     end)
 
-    local comp = {
+    -- Outside click closes
+    UserInputService.InputBegan:Connect(function(inp)
+        if not popupOpen then return end
+        if inp.UserInputType ~= Enum.UserInputType.MouseButton1
+            and inp.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local pos = inp.Position
+        local function inside(gui)
+            if not gui or not gui.Visible then return false end
+            local a = gui.AbsolutePosition
+            local s = gui.AbsoluteSize
+            return pos.X >= a.X and pos.X <= a.X + s.X
+                and pos.Y >= a.Y and pos.Y <= a.Y + s.Y
+        end
+        if not inside(popup) and not inside(preview) then
+            closePopup()
+        end
+    end)
+
+    applyVisuals(false)
+
+    local api = {
         id = id,
+        type = "color",
         row = row,
-        get = function()
-            return currentColor
-        end,
-        set = function(c)
-            local resolved = tableToColor(c)
-            if not resolved and typeof(c) == "Color3" then
-                resolved = c
-            end
-            if not resolved then return end
-            setColor(resolved, false)
-            for _, ref in ipairs(sliderRefs) do
-                setSliderValue(ref, channelValue(currentColor, ref.name), false)
-                updateTrackGradient(ref)
+        get = function() return currentColor end,
+        set = function(c) setColor(c, true) end,
+        onChange = function(cb)
+            if type(cb) == "function" then
+                table.insert(callbacks, cb)
             end
         end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
         destroy = function()
             closePopup()
             ConfigManager.unregister(id)
-            for i, e in ipairs(colorPickerRegistry) do
-                if e == entry then
-                    table.remove(colorPickerRegistry, i)
-                    break
-                end
-            end
-            if popup.Parent then popup:Destroy() end
+            popup:Destroy()
             row:Destroy()
         end,
-        getColor3 = function() return currentColor end,
     }
-    ConfigManager.register(id, comp)
-    return comp
+    ConfigManager.register(id, api)
+    return api
 end
 
 
@@ -3436,6 +3432,18 @@ function Library:_createSection(tab, name, side, options)
         _counter = 0,
     }
 
+    -- Optional card description under the title
+    local descText = options.description or options.desc
+    if type(descText) == "string" and descText ~= "" then
+        local desc = createLabelRow(card, 1, descText, {
+            color = THEME.TextDim,
+            size = 11,
+            wrap = true,
+        })
+        section._description = desc
+        section._counter = 1
+    end
+
     function section:_nextOrder()
         self._counter = self._counter + 1
         return self._counter
@@ -3544,12 +3552,24 @@ function Library:_createSection(tab, name, side, options)
     end
 
     function section:CreateLabel(textValue, opts)
-        return createLabelRow(
+        opts = opts or {}
+        local comp = createLabelRow(
             self._card,
             self:_nextOrder(),
             textValue,
             opts
         )
+        table.insert(self._components, comp)
+        return comp
+    end
+
+    -- Descriptive text for a card (muted, wraps)
+    function section:CreateDescription(textValue, opts)
+        opts = opts or {}
+        if opts.color == nil then opts.color = THEME.TextDim end
+        if opts.size == nil then opts.size = 11 end
+        if opts.wrap == nil then opts.wrap = true end
+        return self:CreateLabel(textValue, opts)
     end
 
     function section:CreateButton(label, color, callback)
@@ -3712,6 +3732,10 @@ function Library:_installTabMethods(tab)
 
     function tab:CreateLabel(textValue, opts)
         return ensureDefaultSection(self):CreateLabel(textValue, opts)
+    end
+
+    function tab:CreateDescription(textValue, opts)
+        return ensureDefaultSection(self):CreateDescription(textValue, opts)
     end
 
     function tab:CreateButton(label, color, callback)
