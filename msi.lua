@@ -107,6 +107,61 @@ local function toHex(c)
         math.floor(c.R*255+0.5), math.floor(c.G*255+0.5), math.floor(c.B*255+0.5))
 end
 
+-- Live clock (DateTime → os.date → tick fallback) so time/date always tick
+local function clockParts()
+    local ok, dt = pcall(function()
+        return DateTime.now()
+    end)
+    if ok and dt then
+        local ok2, formatted = pcall(function()
+            return {
+                date = dt:FormatLocalTime("dd.MM.yyyy", "en-us"),
+                time = dt:FormatLocalTime("HH:mm:ss", "en-us"),
+                short = dt:FormatLocalTime("HH:mm", "en-us"),
+                isoDate = dt:FormatLocalTime("yyyy-MM-dd", "en-us"),
+            }
+        end)
+        if ok2 and formatted then
+            return formatted
+        end
+    end
+
+    local ok3, parts = pcall(function()
+        return {
+            date = os.date("%d.%m.%Y"),
+            time = os.date("%H:%M:%S"),
+            short = os.date("%H:%M"),
+            isoDate = os.date("%Y-%m-%d"),
+        }
+    end)
+    if ok3 and parts then
+        return parts
+    end
+
+    -- last resort from unix-ish tick (UTC-ish, still moving)
+    local t = math.floor(tick() % 86400)
+    local h = math.floor(t / 3600)
+    local m = math.floor((t % 3600) / 60)
+    local s = t % 60
+    local timeStr = string.format("%02d:%02d:%02d", h, m, s)
+    return {
+        date = "--.--.----",
+        time = timeStr,
+        short = string.format("%02d:%02d", h, m),
+        isoDate = "----.--.--",
+    }
+end
+
+local function clockFull()
+    local p = clockParts()
+    return p.date .. " " .. p.short
+end
+
+local function clockFullSeconds()
+    local p = clockParts()
+    return p.date .. " " .. p.time
+end
+
 -- Serializable color / key helpers for config save-load
 local function colorToTable(c)
     if typeof(c) ~= "Color3" then return c end
@@ -253,9 +308,18 @@ local watermark
 local function notify(title, text, ntype, duration)
     ntype = ntype or "info"
     duration = duration or 3.5
+
     local color = ({
         info    = THEME.Accent,
-        success = THEME.Success,
+        success = THEME.AccentLight,  -- purple family to match menu
+        warning = THEME.Warning,
+        error   = THEME.Error,
+    })[ntype] or THEME.Accent
+
+    -- Soft type tint for bar (still readable, still on-theme)
+    local barColor = ({
+        info    = THEME.Accent,
+        success = Color3.fromRGB(140, 100, 255),
         warning = THEME.Warning,
         error   = THEME.Error,
     })[ntype] or THEME.Accent
@@ -263,10 +327,10 @@ local function notify(title, text, ntype, duration)
     if not notifyHost then return end
 
     local hasBody = text and text ~= ""
-    local h = hasBody and 58 or 42
+    local h = hasBody and 62 or 44
 
     local toast = Instance.new("Frame")
-    toast.Size = UDim2.fromOffset(280, h)
+    toast.Size = UDim2.fromOffset(290, h)
     toast.BackgroundColor3 = THEME.Card
     toast.BackgroundTransparency = 1
     toast.BorderSizePixel = 0
@@ -274,22 +338,32 @@ local function notify(title, text, ntype, duration)
     toast.ZIndex = 151
     toast.Parent = notifyHost
     corner(toast, 12)
-    local toastStroke = stroke(toast, color, 1.5, 1)
+    local toastStroke = stroke(toast, THEME.Accent, 1.2, 1)
 
+    -- left accent bar (matches menu cards / rail)
     local accentBar = Instance.new("Frame")
-    accentBar.Size = UDim2.new(0, 3, 1, -12)
-    accentBar.Position = UDim2.fromOffset(6, 6)
-    accentBar.BackgroundColor3 = color
+    accentBar.Size = UDim2.new(0, 3, 1, -14)
+    accentBar.Position = UDim2.fromOffset(7, 7)
+    accentBar.BackgroundColor3 = barColor
     accentBar.BackgroundTransparency = 1
     accentBar.BorderSizePixel = 0
     accentBar.ZIndex = 152
     accentBar.Parent = toast
     corner(accentBar, 2)
 
+    -- subtle top line like header separator
+    local topLine = Instance.new("Frame")
+    topLine.Size = UDim2.new(1, 0, 0, 1)
+    topLine.BackgroundColor3 = THEME.Accent
+    topLine.BackgroundTransparency = 1
+    topLine.BorderSizePixel = 0
+    topLine.ZIndex = 152
+    topLine.Parent = toast
+
     local titleLbl = Instance.new("TextLabel")
     titleLbl.BackgroundTransparency = 1
-    titleLbl.Position = UDim2.fromOffset(16, hasBody and 10 or 12)
-    titleLbl.Size = UDim2.new(1, -28, 0, 16)
+    titleLbl.Position = UDim2.fromOffset(18, hasBody and 11 or 13)
+    titleLbl.Size = UDim2.new(1, -30, 0, 16)
     titleLbl.Text = title
     titleLbl.TextColor3 = THEME.TextPrimary
     titleLbl.TextTransparency = 1
@@ -304,8 +378,8 @@ local function notify(title, text, ntype, duration)
     if hasBody then
         bodyLbl = Instance.new("TextLabel")
         bodyLbl.BackgroundTransparency = 1
-        bodyLbl.Position = UDim2.fromOffset(16, 28)
-        bodyLbl.Size = UDim2.new(1, -28, 0, 18)
+        bodyLbl.Position = UDim2.fromOffset(18, 30)
+        bodyLbl.Size = UDim2.new(1, -30, 0, 18)
         bodyLbl.Text = text
         bodyLbl.TextColor3 = THEME.TextMuted
         bodyLbl.TextTransparency = 1
@@ -318,13 +392,17 @@ local function notify(title, text, ntype, duration)
     end
 
     -- slide in from right
-    toast.Position = UDim2.new(0, 40, 0, 0)
-    TweenService:Create(toast, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        BackgroundTransparency = 0.15,
+    toast.Position = UDim2.new(0, 48, 0, 0)
+    TweenService:Create(toast, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0.12,
         Position = UDim2.new(0, 0, 0, 0),
     }):Play()
-    TweenService:Create(toastStroke, TweenInfo.new(0.3), { Transparency = 0.35 }):Play()
+    TweenService:Create(toastStroke, TweenInfo.new(0.3), {
+        Transparency = 0.45,
+        Color = THEME.Accent,
+    }):Play()
     TweenService:Create(accentBar, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
+    TweenService:Create(topLine, TweenInfo.new(0.35), { BackgroundTransparency = 0.65 }):Play()
     TweenService:Create(titleLbl, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
     if bodyLbl then
         TweenService:Create(bodyLbl, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
@@ -338,6 +416,7 @@ local function notify(title, text, ntype, duration)
         }):Play()
         TweenService:Create(toastStroke, TweenInfo.new(0.25), { Transparency = 1 }):Play()
         TweenService:Create(accentBar, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+        TweenService:Create(topLine, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
         TweenService:Create(titleLbl, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
         if bodyLbl then
             TweenService:Create(bodyLbl, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
@@ -348,6 +427,7 @@ local function notify(title, text, ntype, duration)
 
     return toast
 end
+
 
 ----------------------------------------------------------------
 -- CONFIG SYSTEM
@@ -829,7 +909,7 @@ timeLabel.AnchorPoint   = Vector2.new(1, 0)
 timeLabel.Position      = UDim2.new(1, -44, 0.5, 1)
 timeLabel.Size          = UDim2.fromOffset(126, 14)
 timeLabel.BackgroundTransparency = 1
-timeLabel.Text          = os.date("%d.%m.%Y %H:%M")
+timeLabel.Text          = clockFullSeconds()
 timeLabel.TextColor3    = THEME.TextMuted
 timeLabel.Font          = Enum.Font.Gotham
 timeLabel.TextSize      = 11
@@ -838,9 +918,9 @@ timeLabel.ZIndex        = 2
 timeLabel.Parent        = profileContainer
 
 task.spawn(function()
-    while screenGui.Parent do
-        timeLabel.Text = os.date("%d.%m.%Y %H:%M")
-        task.wait(30)
+    while screenGui and screenGui.Parent do
+        timeLabel.Text = clockFullSeconds()
+        task.wait(1)
     end
 end)
 
@@ -1380,10 +1460,19 @@ local function createSliderRow(card, order, label, min, max, default, decimals, 
 end
 
 local dropdownRegistry = {}
+local colorPickerRegistry = {}
 
 local function closeAllDropdowns(except)
     for _, entry in ipairs(dropdownRegistry) do
         if entry ~= except and entry.optionsFrame.Visible then
+            entry.close()
+        end
+    end
+end
+
+local function closeAllColorPickers(except)
+    for _, entry in ipairs(colorPickerRegistry) do
+        if entry ~= except and entry.isOpen and entry.isOpen() then
             entry.close()
         end
     end
@@ -2107,17 +2196,20 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
 
     local currentColor = defaultColor
     local callbacks = {}
+    local originalCardZ = card.ZIndex
+    local originalRowZ = row.ZIndex
+    local popupOpen = false
 
+    -- Popup is parented to screenGui so Sibling ZIndex cannot bury it under later rows
     local popup = Instance.new("Frame")
     popup.Name = "ColorPopup"
     popup.AnchorPoint = Vector2.new(1, 0)
-    popup.Position = UDim2.new(1, 0, 0, 30)
     popup.Size = UDim2.fromOffset(250, 300)
     popup.BackgroundColor3 = THEME.PanelAlt
     popup.Visible = false
-    popup.ZIndex = 200
-    popup.Parent = row
+    popup.ZIndex = 500
     popup.ClipsDescendants = false
+    popup.Parent = screenGui
     corner(popup, 10)
     stroke(popup, THEME.Accent, 1, 0.35)
 
@@ -2130,15 +2222,14 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     popupTitle.Font = Enum.Font.GothamBold
     popupTitle.TextSize = 12
     popupTitle.TextXAlignment = Enum.TextXAlignment.Left
-    popupTitle.ZIndex = 201
+    popupTitle.ZIndex = 501
     popupTitle.Parent = popup
 
-    -- Large live preview.
     local livePreview = Instance.new("Frame")
     livePreview.Position = UDim2.fromOffset(10, 30)
     livePreview.Size = UDim2.new(1, -20, 0, 54)
     livePreview.BackgroundColor3 = currentColor
-    livePreview.ZIndex = 201
+    livePreview.ZIndex = 501
     livePreview.Parent = popup
     corner(livePreview, 8)
     stroke(livePreview, THEME.AccentLight, 1, 0.35)
@@ -2152,7 +2243,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     liveHex.TextColor3 = THEME.White
     liveHex.Font = Enum.Font.GothamBold
     liveHex.TextSize = 12
-    liveHex.ZIndex = 202
+    liveHex.ZIndex = 502
     liveHex.Parent = livePreview
 
     local function fireColorChanged()
@@ -2177,12 +2268,6 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         if channel == "G" then return math.floor(c.G * 255 + 0.5) end
         return math.floor(c.B * 255 + 0.5)
     end
-
-    local channelData = {
-        {name = "R", color = "red",   y = 98},
-        {name = "G", color = "green", y = 139},
-        {name = "B", color = "blue",  y = 180},
-    }
 
     local function composeColor(channel, value)
         local r = math.floor(currentColor.R * 255 + 0.5)
@@ -2227,6 +2312,12 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         end
     end
 
+    local channelData = {
+        {name = "R", y = 98},
+        {name = "G", y = 139},
+        {name = "B", y = 180},
+    }
+
     for _, info in ipairs(channelData) do
         local nameLabel = Instance.new("TextLabel")
         nameLabel.BackgroundTransparency = 1
@@ -2237,7 +2328,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         nameLabel.Font = Enum.Font.GothamBold
         nameLabel.TextSize = 11
         nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-        nameLabel.ZIndex = 201
+        nameLabel.ZIndex = 501
         nameLabel.Parent = popup
 
         local valueLabel = Instance.new("TextLabel")
@@ -2249,7 +2340,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         valueLabel.Font = Enum.Font.GothamBold
         valueLabel.TextSize = 11
         valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-        valueLabel.ZIndex = 201
+        valueLabel.ZIndex = 501
         valueLabel.Parent = popup
 
         local track = Instance.new("Frame")
@@ -2257,7 +2348,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         track.Size = UDim2.new(1, -78, 0, 8)
         track.BackgroundColor3 = THEME.Panel
         track.BorderSizePixel = 0
-        track.ZIndex = 201
+        track.ZIndex = 501
         track.Parent = popup
         corner(track, 4)
 
@@ -2269,7 +2360,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         fill.BackgroundColor3 = THEME.Accent
         fill.BackgroundTransparency = 0.1
         fill.BorderSizePixel = 0
-        fill.ZIndex = 202
+        fill.ZIndex = 502
         fill.Parent = track
         corner(fill, 4)
 
@@ -2279,7 +2370,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         knob.BackgroundColor3 = THEME.White
         knob.AutoButtonColor = false
         knob.Text = ""
-        knob.ZIndex = 203
+        knob.ZIndex = 503
         knob.Parent = track
         corner(knob, 7)
         stroke(knob, THEME.Accent, 1, 0.3)
@@ -2354,7 +2445,6 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         end)
     end
 
-    -- Presets stay available at the bottom.
     local presetsLabel = Instance.new("TextLabel")
     presetsLabel.BackgroundTransparency = 1
     presetsLabel.Position = UDim2.fromOffset(10, 219)
@@ -2364,7 +2454,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     presetsLabel.Font = Enum.Font.Gotham
     presetsLabel.TextSize = 10
     presetsLabel.TextXAlignment = Enum.TextXAlignment.Left
-    presetsLabel.ZIndex = 201
+    presetsLabel.ZIndex = 501
     presetsLabel.Parent = popup
 
     local presets = {
@@ -2384,7 +2474,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     palette.BackgroundTransparency = 1
     palette.Position = UDim2.fromOffset(10, 238)
     palette.Size = UDim2.new(1, -20, 0, 50)
-    palette.ZIndex = 201
+    palette.ZIndex = 501
     palette.Parent = popup
 
     local grid = Instance.new("UIGridLayout")
@@ -2397,7 +2487,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         swatch.BackgroundColor3 = c
         swatch.AutoButtonColor = false
         swatch.Text = ""
-        swatch.ZIndex = 202
+        swatch.ZIndex = 502
         swatch.Parent = palette
         corner(swatch, 6)
         swatch.MouseButton1Click:Connect(function()
@@ -2409,7 +2499,6 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         end)
     end
 
-    -- Initialize slider state and gradients.
     for _, ref in ipairs(sliderRefs) do
         setSliderValue(ref, channelValue(currentColor, ref.name), false)
     end
@@ -2417,14 +2506,64 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         updateTrackGradient(ref)
     end
 
+    local function positionPopup()
+        local abs = preview.AbsolutePosition
+        local size = preview.AbsoluteSize
+        local host = screenGui.AbsolutePosition
+        local px = abs.X + size.X - host.X
+        local py = abs.Y + size.Y + 6 - host.Y
+        -- keep on screen
+        local guiSize = screenGui.AbsoluteSize
+        if px < 250 then px = abs.X - host.X + 250 end
+        if py + 300 > guiSize.Y then
+            py = abs.Y - host.Y - 300 - 6
+        end
+        popup.Position = UDim2.fromOffset(px, py)
+    end
+
+    local function closePopup()
+        if not popupOpen then return end
+        popupOpen = false
+        popup.Visible = false
+        card.ZIndex = originalCardZ
+        row.ZIndex = originalRowZ
+    end
+
+    local function openPopup()
+        closeAllDropdowns()
+        closeAllColorPickers()
+        popupOpen = true
+        positionPopup()
+        popup.Visible = true
+        card.ZIndex = 200
+        row.ZIndex = 250
+        for _, ref in ipairs(sliderRefs) do
+            setSliderValue(ref, channelValue(currentColor, ref.name), false)
+            updateTrackGradient(ref)
+        end
+    end
+
+    local entry = {
+        close = closePopup,
+        isOpen = function() return popupOpen end,
+        popup = popup,
+        preview = preview,
+    }
+    table.insert(colorPickerRegistry, entry)
+
+    -- Don't close when clicking inside the popup
+    popup.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            -- swallow so global closer doesn't immediately re-close
+        end
+    end)
+
     preview.MouseButton1Click:Connect(function()
-        popup.Visible = not popup.Visible
-        if popup.Visible then
-            for _, ref in ipairs(sliderRefs) do
-                setSliderValue(ref, channelValue(currentColor, ref.name), false)
-                updateTrackGradient(ref)
-            end
-            popup.ZIndex = 200
+        if popupOpen then
+            closePopup()
+        else
+            openPopup()
         end
     end)
 
@@ -2432,7 +2571,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         id = id,
         row = row,
         get = function()
-            return colorToTable(currentColor)
+            return currentColor
         end,
         set = function(c)
             local resolved = tableToColor(c)
@@ -2448,15 +2587,23 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         end,
         onChange = function(cb) table.insert(callbacks, cb) end,
         destroy = function()
+            closePopup()
             ConfigManager.unregister(id)
+            for i, e in ipairs(colorPickerRegistry) do
+                if e == entry then
+                    table.remove(colorPickerRegistry, i)
+                    break
+                end
+            end
+            if popup.Parent then popup:Destroy() end
             row:Destroy()
         end,
-        -- live Color3 for scripts that need it directly
         getColor3 = function() return currentColor end,
     }
     ConfigManager.register(id, comp)
     return comp
 end
+
 
 local function createStaticRow(card, order, label, value, muted)
     local row = Instance.new("Frame")
@@ -2613,9 +2760,6 @@ local function setRowHighlight(node, on)
 end
 
 local function markerFor(kind)
-    if kind == "root" then
-        return "○"
-    end
     return ""
 end
 
@@ -2834,20 +2978,8 @@ local function buildNode(data, parent, depth)
         node.arrow = arrow
     end
 
-    local markerLabel = Instance.new("TextLabel")
-    markerLabel.BackgroundTransparency = 1
-    markerLabel.Position = UDim2.fromOffset(
-        depth * INDENT + (hasKids and 26 or 12), 0
-    )
-    markerLabel.Size = UDim2.fromOffset(14, ROW_H)
-    markerLabel.Text = markerFor(data.kind)
-    markerLabel.TextColor3 = markerColor(data.kind)
-    markerLabel.Font = Enum.Font.Gotham
-    markerLabel.TextSize = 11
-    markerLabel.ZIndex = 3
-    markerLabel.Parent = row
-
-    local textOffX = depth * INDENT + (hasKids and 40 or 26)
+    -- no bullet markers — tighter text indent
+    local textOffX = depth * INDENT + (hasKids and 28 or 12)
     local textLabel = Instance.new("TextLabel")
     textLabel.BackgroundTransparency = 1
     textLabel.Position = UDim2.fromOffset(textOffX, 0)
@@ -3833,6 +3965,23 @@ UserInputService.InputBegan:Connect(function(inp, gpe)
 
     if inp.UserInputType == Enum.UserInputType.MouseButton1 then
         closeAllDropdowns()
+
+        -- Close color pickers only when click is outside popup + preview
+        local pos = inp.Position
+        local function hit(gui)
+            if not gui then return false end
+            local ap = gui.AbsolutePosition
+            local as = gui.AbsoluteSize
+            return pos.X >= ap.X and pos.X <= ap.X + as.X
+                and pos.Y >= ap.Y and pos.Y <= ap.Y + as.Y
+        end
+        for _, entry in ipairs(colorPickerRegistry) do
+            if entry.isOpen and entry.isOpen() then
+                if not hit(entry.popup) and not hit(entry.preview) then
+                    entry.close()
+                end
+            end
+        end
     end
 end)
 
@@ -3952,11 +4101,11 @@ do
                 player.DisplayName,
                 fps,
                 ping,
-                os.date("%H:%M"),
+                clockParts().time,
                 exec
             )
 
-            task.wait(0.5)
+            task.wait(1)
         end
     end)
 end
@@ -4200,8 +4349,10 @@ function Library:CreateKeySystem(options)
     screen.ResetOnSpawn = false
     screen.IgnoreGuiInset = true
     screen.DisplayOrder = options.DisplayOrder or 1100
+    screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screen.Parent = playerGui
 
+    -- Full-screen dim + purple wash (same family as menu gradient)
     local backdrop = Instance.new("Frame")
     backdrop.Name = "Backdrop"
     backdrop.Size = UDim2.fromScale(1, 1)
@@ -4213,7 +4364,7 @@ function Library:CreateKeySystem(options)
     local gradientOverlay = Instance.new("Frame")
     gradientOverlay.Name = "GradientOverlay"
     gradientOverlay.Size = UDim2.fromScale(1, 1)
-    gradientOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    gradientOverlay.BackgroundColor3 = THEME.Background
     gradientOverlay.BackgroundTransparency = 1
     gradientOverlay.BorderSizePixel = 0
     gradientOverlay.ZIndex = 2
@@ -4221,27 +4372,36 @@ function Library:CreateKeySystem(options)
 
     local gradient = Instance.new("UIGradient")
     gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(10, 0, 20)),
-        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(45, 0, 80)),
+        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(8, 5, 15)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(15, 8, 30)),
+        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(45, 10, 80)),
     })
     gradient.Rotation = 90
     gradient.Parent = gradientOverlay
 
+    -- Main panel — matches menu window
     local panel = Instance.new("Frame")
     panel.Name = "Panel"
     panel.AnchorPoint = Vector2.new(0.5, 0.5)
     panel.Position = UDim2.fromScale(0.5, 0.5)
-    panel.Size = UDim2.fromOffset(560, 260)
-    panel.BackgroundColor3 = Color3.fromRGB(12, 8, 18)
+    panel.Size = UDim2.fromOffset(580, 300)
+    panel.BackgroundColor3 = THEME.Background
     panel.BackgroundTransparency = 1
     panel.BorderSizePixel = 0
     panel.ClipsDescendants = true
     panel.ZIndex = 5
     panel.Parent = backdrop
-    corner(panel, 14)
+    corner(panel, WINDOW_RADIUS or 14)
+    local panelStroke = stroke(panel, THEME.Accent, 1.5, 1)
 
-    local panelStroke = stroke(panel, Color3.fromRGB(120, 60, 190), 1.5, 1)
+    local panelGradient = Instance.new("UIGradient")
+    panelGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(10, 5, 20)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(15, 8, 30)),
+        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(20, 10, 40)),
+    })
+    panelGradient.Rotation = 90
+    panelGradient.Parent = panel
 
     local panelImage = Instance.new("ImageLabel")
     panelImage.Name = "PanelBackgroundImage"
@@ -4256,64 +4416,122 @@ function Library:CreateKeySystem(options)
     local panelTint = Instance.new("Frame")
     panelTint.Name = "PanelTint"
     panelTint.Size = UDim2.fromScale(1, 1)
-    panelTint.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    panelTint.BackgroundColor3 = THEME.Background
     panelTint.BackgroundTransparency = 1
     panelTint.BorderSizePixel = 0
     panelTint.ZIndex = 4
     panelTint.Parent = panel
 
+    -- Header strip
+    local headerBar = Instance.new("Frame")
+    headerBar.Name = "Header"
+    headerBar.Size = UDim2.new(1, 0, 0, 52)
+    headerBar.BackgroundTransparency = 1
+    headerBar.ZIndex = 6
+    headerBar.Parent = panel
+
+    local headerLine = Instance.new("Frame")
+    headerLine.Position = UDim2.new(0, 0, 1, -1)
+    headerLine.Size = UDim2.new(1, 0, 0, 1)
+    headerLine.BackgroundColor3 = THEME.Accent
+    headerLine.BackgroundTransparency = 1
+    headerLine.BorderSizePixel = 0
+    headerLine.ZIndex = 7
+    headerLine.Parent = headerBar
+
+    local logoLabel = Instance.new("TextLabel")
+    logoLabel.BackgroundTransparency = 1
+    logoLabel.Position = UDim2.fromOffset(18, 0)
+    logoLabel.Size = UDim2.new(0, 160, 1, 0)
+    logoLabel.Text = "MSI.LUA"
+    logoLabel.TextColor3 = THEME.AccentLight
+    logoLabel.Font = Enum.Font.GothamBold
+    logoLabel.TextSize = 18
+    logoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    logoLabel.TextTransparency = 1
+    logoLabel.ZIndex = 7
+    logoLabel.Parent = headerBar
+
+    local headerSub = Instance.new("TextLabel")
+    headerSub.BackgroundTransparency = 1
+    headerSub.Position = UDim2.fromOffset(120, 0)
+    headerSub.Size = UDim2.new(0, 140, 1, 0)
+    headerSub.Text = "KEY SYSTEM"
+    headerSub.TextColor3 = THEME.TextDim
+    headerSub.Font = Enum.Font.Gotham
+    headerSub.TextSize = 11
+    headerSub.TextXAlignment = Enum.TextXAlignment.Left
+    headerSub.TextTransparency = 1
+    headerSub.ZIndex = 7
+    headerSub.Parent = headerBar
+
     local closeButton = Instance.new("TextButton")
     closeButton.Name = "CloseButton"
-    closeButton.AnchorPoint = Vector2.new(1, 0)
-    closeButton.Position = UDim2.new(1, -12, 0, 12)
+    closeButton.AnchorPoint = Vector2.new(1, 0.5)
+    closeButton.Position = UDim2.new(1, -14, 0.5, 0)
     closeButton.Size = UDim2.fromOffset(28, 28)
-    closeButton.BackgroundColor3 = Color3.fromRGB(30, 20, 40)
-    closeButton.Text = "X"
-    closeButton.TextColor3 = Color3.fromRGB(220, 200, 235)
+    closeButton.BackgroundColor3 = THEME.Panel
+    closeButton.BackgroundTransparency = 0.3
+    closeButton.Text = "×"
+    closeButton.TextColor3 = THEME.TextMuted
     closeButton.Font = Enum.Font.GothamBold
-    closeButton.TextSize = 14
+    closeButton.TextSize = 18
     closeButton.AutoButtonColor = false
-    closeButton.ZIndex = 6
-    closeButton.Parent = panel
-    corner(closeButton, 14)
+    closeButton.ZIndex = 8
+    closeButton.Parent = headerBar
+    corner(closeButton, 8)
+    stroke(closeButton, THEME.Border, 1, 0.5)
 
     closeButton.MouseEnter:Connect(function()
         TweenService:Create(closeButton, TweenInfo.new(0.15), {
-            BackgroundColor3 = Color3.fromRGB(160, 40, 60),
+            BackgroundColor3 = THEME.Error,
+            TextColor3 = THEME.White,
         }):Play()
     end)
-
     closeButton.MouseLeave:Connect(function()
         TweenService:Create(closeButton, TweenInfo.new(0.15), {
-            BackgroundColor3 = Color3.fromRGB(30, 20, 40),
+            BackgroundColor3 = THEME.Panel,
+            TextColor3 = THEME.TextMuted,
         }):Play()
     end)
 
-    local leftContainer = Instance.new("Frame")
-    leftContainer.Name = "LeftContainer"
-    leftContainer.Position = UDim2.fromOffset(24, 24)
-    leftContainer.Size = UDim2.fromOffset(200, 212)
-    leftContainer.BackgroundTransparency = 1
-    leftContainer.ZIndex = 6
-    leftContainer.Parent = panel
+    -- Body
+    local body = Instance.new("Frame")
+    body.Name = "Body"
+    body.Position = UDim2.fromOffset(0, 52)
+    body.Size = UDim2.new(1, 0, 1, -52)
+    body.BackgroundTransparency = 1
+    body.ZIndex = 6
+    body.Parent = panel
+
+    -- Left profile card
+    local leftCard = Instance.new("Frame")
+    leftCard.Position = UDim2.fromOffset(18, 16)
+    leftCard.Size = UDim2.fromOffset(200, 210)
+    leftCard.BackgroundColor3 = THEME.Card
+    leftCard.BackgroundTransparency = 0.25
+    leftCard.BorderSizePixel = 0
+    leftCard.ZIndex = 7
+    leftCard.Parent = body
+    corner(leftCard, 12)
+    stroke(leftCard, THEME.Accent, 1, 0.55)
 
     local avatarFrame = Instance.new("Frame")
-    avatarFrame.Name = "AvatarFrame"
-    avatarFrame.Size = UDim2.fromOffset(84, 84)
-    avatarFrame.BackgroundColor3 = Color3.fromRGB(25, 16, 35)
-    avatarFrame.ZIndex = 6
-    avatarFrame.Parent = leftContainer
-    corner(avatarFrame, 10)
-    stroke(avatarFrame, Color3.fromRGB(150, 90, 220), 1.5, 0)
+    avatarFrame.Position = UDim2.fromOffset(16, 16)
+    avatarFrame.Size = UDim2.fromOffset(72, 72)
+    avatarFrame.BackgroundColor3 = THEME.PanelAlt
+    avatarFrame.ZIndex = 8
+    avatarFrame.Parent = leftCard
+    corner(avatarFrame, 12)
+    stroke(avatarFrame, THEME.Accent, 1.5, 0.35)
 
     local avatarImage = Instance.new("ImageLabel")
-    avatarImage.Name = "AvatarImage"
     avatarImage.Size = UDim2.fromScale(1, 1)
     avatarImage.BackgroundTransparency = 1
     avatarImage.ScaleType = Enum.ScaleType.Fit
-    avatarImage.ZIndex = 6
+    avatarImage.ZIndex = 8
     avatarImage.Parent = avatarFrame
-    corner(avatarImage, 10)
+    corner(avatarImage, 12)
 
     task.spawn(function()
         local ok, content = pcall(function()
@@ -4323,44 +4541,40 @@ function Library:CreateKeySystem(options)
                 Enum.ThumbnailSize.Size180x180
             )
         end)
-        if ok then
-            avatarImage.Image = content
-        end
+        if ok then avatarImage.Image = content end
     end)
 
     local usernameLabel = Instance.new("TextLabel")
-    usernameLabel.Name = "UsernameLabel"
-    usernameLabel.Position = UDim2.fromOffset(0, 92)
-    usernameLabel.Size = UDim2.fromOffset(200, 22)
     usernameLabel.BackgroundTransparency = 1
+    usernameLabel.Position = UDim2.fromOffset(100, 22)
+    usernameLabel.Size = UDim2.fromOffset(90, 22)
     usernameLabel.Text = player.DisplayName
-    usernameLabel.TextColor3 = Color3.fromRGB(230, 220, 240)
+    usernameLabel.TextColor3 = THEME.TextPrimary
     usernameLabel.Font = Enum.Font.GothamBold
-    usernameLabel.TextSize = 18
+    usernameLabel.TextSize = 14
     usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
-    usernameLabel.ZIndex = 6
-    usernameLabel.Parent = leftContainer
+    usernameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    usernameLabel.ZIndex = 8
+    usernameLabel.Parent = leftCard
 
     local handleLabel = Instance.new("TextLabel")
-    handleLabel.Name = "HandleLabel"
-    handleLabel.Position = UDim2.fromOffset(0, 114)
-    handleLabel.Size = UDim2.fromOffset(200, 16)
     handleLabel.BackgroundTransparency = 1
+    handleLabel.Position = UDim2.fromOffset(100, 44)
+    handleLabel.Size = UDim2.fromOffset(90, 16)
     handleLabel.Text = "@" .. player.Name
-    handleLabel.TextColor3 = Color3.fromRGB(160, 140, 190)
+    handleLabel.TextColor3 = THEME.TextMuted
     handleLabel.Font = Enum.Font.Gotham
-    handleLabel.TextSize = 13
+    handleLabel.TextSize = 11
     handleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    handleLabel.ZIndex = 6
-    handleLabel.Parent = leftContainer
+    handleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    handleLabel.ZIndex = 8
+    handleLabel.Parent = leftCard
 
     local function getPlatformName()
         local ok, platform = pcall(function()
             return UserInputService:GetPlatform()
         end)
-        if not ok then
-            return "Unknown"
-        end
+        if not ok then return "Unknown" end
         local map = {
             [Enum.Platform.Windows] = "Windows",
             [Enum.Platform.OSX] = "macOS",
@@ -4373,145 +4587,164 @@ function Library:CreateKeySystem(options)
         return map[platform] or "Unknown"
     end
 
-    local platformLabel = Instance.new("TextLabel")
-    platformLabel.Name = "PlatformLabel"
-    platformLabel.Position = UDim2.fromOffset(0, 140)
-    platformLabel.Size = UDim2.fromOffset(200, 16)
-    platformLabel.BackgroundTransparency = 1
-    platformLabel.Text = "Platform: " .. getPlatformName()
-    platformLabel.TextColor3 = Color3.fromRGB(180, 160, 210)
-    platformLabel.Font = Enum.Font.Gotham
-    platformLabel.TextSize = 13
-    platformLabel.TextXAlignment = Enum.TextXAlignment.Left
-    platformLabel.ZIndex = 6
-    platformLabel.Parent = leftContainer
+    local infoY = 104
+    local function addInfoRow(label, value)
+        local row = Instance.new("Frame")
+        row.Position = UDim2.fromOffset(16, infoY)
+        row.Size = UDim2.new(1, -32, 0, 18)
+        row.BackgroundTransparency = 1
+        row.ZIndex = 8
+        row.Parent = leftCard
 
-    local dateLabel = Instance.new("TextLabel")
-    dateLabel.Name = "DateLabel"
-    dateLabel.Position = UDim2.fromOffset(0, 162)
-    dateLabel.Size = UDim2.fromOffset(200, 16)
-    dateLabel.BackgroundTransparency = 1
-    dateLabel.Text = os.date("%Y-%m-%d")
-    dateLabel.TextColor3 = Color3.fromRGB(180, 160, 210)
-    dateLabel.Font = Enum.Font.Gotham
-    dateLabel.TextSize = 13
-    dateLabel.TextXAlignment = Enum.TextXAlignment.Left
-    dateLabel.ZIndex = 6
-    dateLabel.Parent = leftContainer
+        local l = Instance.new("TextLabel")
+        l.BackgroundTransparency = 1
+        l.Size = UDim2.new(0.42, 0, 1, 0)
+        l.Text = label
+        l.TextColor3 = THEME.TextDim
+        l.Font = Enum.Font.Gotham
+        l.TextSize = 11
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.ZIndex = 8
+        l.Parent = row
 
-    local timeLabel = Instance.new("TextLabel")
-    timeLabel.Name = "TimeLabel"
-    timeLabel.Position = UDim2.fromOffset(0, 184)
-    timeLabel.Size = UDim2.fromOffset(200, 16)
-    timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = os.date("%H:%M:%S")
-    timeLabel.TextColor3 = Color3.fromRGB(180, 160, 210)
-    timeLabel.Font = Enum.Font.Gotham
-    timeLabel.TextSize = 13
-    timeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    timeLabel.ZIndex = 6
-    timeLabel.Parent = leftContainer
+        local v = Instance.new("TextLabel")
+        v.BackgroundTransparency = 1
+        v.Position = UDim2.fromScale(0.42, 0)
+        v.Size = UDim2.new(0.58, 0, 1, 0)
+        v.Text = value
+        v.TextColor3 = THEME.TextMuted
+        v.Font = Enum.Font.Gotham
+        v.TextSize = 11
+        v.TextXAlignment = Enum.TextXAlignment.Right
+        v.ZIndex = 8
+        v.Parent = row
+
+        infoY = infoY + 22
+        return v
+    end
+
+    addInfoRow("Platform", getPlatformName())
+    local dateValue = addInfoRow("Date", clockParts().isoDate)
+    local timeValue = addInfoRow("Time", clockParts().time)
+    local attemptsValue = addInfoRow("Attempts", tostring(maxAttempts))
 
     local timeThread = true
     task.spawn(function()
         while timeThread and screen.Parent do
-            timeLabel.Text = os.date("%H:%M:%S")
-            dateLabel.Text = os.date("%Y-%m-%d")
+            local p = clockParts()
+            timeValue.Text = p.time
+            dateValue.Text = p.isoDate
             task.wait(1)
         end
     end)
 
-    local rightContainer = Instance.new("Frame")
-    rightContainer.Name = "RightContainer"
-    rightContainer.Position = UDim2.fromOffset(248, 24)
-    rightContainer.Size = UDim2.fromOffset(288, 212)
-    rightContainer.BackgroundTransparency = 1
-    rightContainer.ZIndex = 6
-    rightContainer.Parent = panel
+    -- Right form card
+    local rightCard = Instance.new("Frame")
+    rightCard.Position = UDim2.fromOffset(232, 16)
+    rightCard.Size = UDim2.fromOffset(330, 210)
+    rightCard.BackgroundColor3 = THEME.Card
+    rightCard.BackgroundTransparency = 0.25
+    rightCard.BorderSizePixel = 0
+    rightCard.ZIndex = 7
+    rightCard.Parent = body
+    corner(rightCard, 12)
+    stroke(rightCard, THEME.Accent, 1, 0.55)
 
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "StatusLabel"
-    statusLabel.Size = UDim2.fromOffset(288, 18)
     statusLabel.BackgroundTransparency = 1
+    statusLabel.Position = UDim2.fromOffset(16, 14)
+    statusLabel.Size = UDim2.new(1, -32, 0, 18)
     statusLabel.Text = options.StatusText or string.format("Enter your key · %d attempts", maxAttempts)
-    statusLabel.TextColor3 = Color3.fromRGB(190, 170, 220)
+    statusLabel.TextColor3 = THEME.TextMuted
     statusLabel.Font = Enum.Font.Gotham
-    statusLabel.TextSize = 13
+    statusLabel.TextSize = 12
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statusLabel.ZIndex = 6
-    statusLabel.Parent = rightContainer
+    statusLabel.ZIndex = 8
+    statusLabel.Parent = rightCard
 
     local keyInputFrame = Instance.new("Frame")
-    keyInputFrame.Name = "KeyInputFrame"
-    keyInputFrame.Position = UDim2.fromOffset(0, 26)
-    keyInputFrame.Size = UDim2.fromOffset(288, 42)
-    keyInputFrame.BackgroundColor3 = Color3.fromRGB(20, 14, 28)
-    keyInputFrame.ZIndex = 6
-    keyInputFrame.Parent = rightContainer
-    corner(keyInputFrame, 8)
-    local keyInputStroke = stroke(keyInputFrame, Color3.fromRGB(110, 70, 170), 1.2, 0.2)
+    keyInputFrame.Position = UDim2.fromOffset(16, 40)
+    keyInputFrame.Size = UDim2.new(1, -32, 0, 40)
+    keyInputFrame.BackgroundColor3 = THEME.Panel
+    keyInputFrame.ZIndex = 8
+    keyInputFrame.Parent = rightCard
+    corner(keyInputFrame, 10)
+    local keyInputStroke = stroke(keyInputFrame, THEME.Accent, 1, 0.4)
 
     local keyInput = Instance.new("TextBox")
-    keyInput.Name = "KeyInput"
-    keyInput.Position = UDim2.fromOffset(12, 0)
-    keyInput.Size = UDim2.fromOffset(264, 42)
+    keyInput.Position = UDim2.fromOffset(14, 0)
+    keyInput.Size = UDim2.new(1, -28, 1, 0)
     keyInput.BackgroundTransparency = 1
     keyInput.PlaceholderText = options.Placeholder or "Paste your key here..."
-    keyInput.PlaceholderColor3 = Color3.fromRGB(120, 100, 145)
+    keyInput.PlaceholderColor3 = THEME.TextDim
     keyInput.Text = ""
-    keyInput.TextColor3 = Color3.fromRGB(230, 220, 240)
+    keyInput.TextColor3 = THEME.TextPrimary
     keyInput.Font = Enum.Font.Gotham
     keyInput.TextSize = 14
     keyInput.TextXAlignment = Enum.TextXAlignment.Left
     keyInput.ClearTextOnFocus = false
-    keyInput.ZIndex = 6
+    keyInput.ZIndex = 9
     keyInput.Parent = keyInputFrame
 
     keyInput.Focused:Connect(function()
+        TweenService:Create(keyInputFrame, TweenInfo.new(0.15), {
+            BackgroundColor3 = THEME.PanelAlt,
+        }):Play()
         TweenService:Create(keyInputStroke, TweenInfo.new(0.15), {
-            Color = Color3.fromRGB(180, 80, 255),
-            Transparency = 0,
+            Color = THEME.AccentLight,
+            Transparency = 0.15,
         }):Play()
     end)
-
     keyInput.FocusLost:Connect(function()
+        TweenService:Create(keyInputFrame, TweenInfo.new(0.15), {
+            BackgroundColor3 = THEME.Panel,
+        }):Play()
         TweenService:Create(keyInputStroke, TweenInfo.new(0.15), {
-            Color = Color3.fromRGB(110, 70, 170),
-            Transparency = 0.2,
+            Color = THEME.Accent,
+            Transparency = 0.4,
         }):Play()
     end)
 
-    local function makeKeyButton(name, text, position, size, color)
+    local function makeKeyButton(name, text, position, size, fillColor)
         local button = Instance.new("TextButton")
         button.Name = name
         button.Position = position
         button.Size = size
-        button.BackgroundColor3 = color
+        button.BackgroundColor3 = fillColor
         button.Text = text
-        button.TextColor3 = Color3.fromRGB(240, 235, 245)
+        button.TextColor3 = THEME.White
         button.Font = Enum.Font.GothamBold
-        button.TextSize = 15
+        button.TextSize = 13
         button.AutoButtonColor = false
-        button.ZIndex = 6
-        button.Parent = rightContainer
-        corner(button, 8)
+        button.ZIndex = 9
+        button.Parent = rightCard
+        corner(button, 10)
+        stroke(button, THEME.AccentLight, 1, 0.55)
 
-        local baseColor = color
-        local hoverColor = Color3.new(
-            math.min(baseColor.R + 0.12, 1),
-            math.min(baseColor.G + 0.12, 1),
-            math.min(baseColor.B + 0.12, 1)
-        )
-
+        local base = fillColor
         button.MouseEnter:Connect(function()
-            TweenService:Create(button, TweenInfo.new(0.15), {
-                BackgroundColor3 = hoverColor,
+            TweenService:Create(button, TweenInfo.new(0.12), {
+                BackgroundTransparency = 0.12,
+                Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset + 2),
             }):Play()
         end)
-
         button.MouseLeave:Connect(function()
-            TweenService:Create(button, TweenInfo.new(0.15), {
-                BackgroundColor3 = baseColor,
+            TweenService:Create(button, TweenInfo.new(0.12), {
+                BackgroundTransparency = 0,
+                Size = size,
+                BackgroundColor3 = base,
+            }):Play()
+        end)
+        button.MouseButton1Down:Connect(function()
+            TweenService:Create(button, TweenInfo.new(0.08), {
+                Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset - 2),
+                BackgroundTransparency = 0.25,
+            }):Play()
+        end)
+        button.MouseButton1Up:Connect(function()
+            TweenService:Create(button, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
+                Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset + 2),
+                BackgroundTransparency = 0.12,
             }):Play()
         end)
 
@@ -4521,41 +4754,53 @@ function Library:CreateKeySystem(options)
     local getKeyButton = makeKeyButton(
         "GetKeyButton",
         "Get Key",
-        UDim2.fromOffset(0, 80),
-        UDim2.fromOffset(138, 40),
-        Color3.fromRGB(45, 32, 65)
+        UDim2.fromOffset(16, 92),
+        UDim2.fromOffset(144, 36),
+        THEME.PanelAlt
     )
 
     local verifyButton = makeKeyButton(
         "VerifyButton",
         "Verify Key",
-        UDim2.fromOffset(150, 80),
-        UDim2.fromOffset(138, 40),
-        Color3.fromRGB(95, 45, 160)
+        UDim2.fromOffset(170, 92),
+        UDim2.fromOffset(144, 36),
+        THEME.Accent
     )
 
     local hintLabel = Instance.new("TextLabel")
-    hintLabel.Name = "HintLabel"
-    hintLabel.Position = UDim2.fromOffset(0, 134)
-    hintLabel.Size = UDim2.fromOffset(288, 60)
     hintLabel.BackgroundTransparency = 1
-    hintLabel.Text = options.HintText or string.format("You have %d attempts. After that you will be kicked from the game.", maxAttempts)
-    hintLabel.TextColor3 = Color3.fromRGB(140, 120, 165)
+    hintLabel.Position = UDim2.fromOffset(16, 142)
+    hintLabel.Size = UDim2.new(1, -32, 0, 52)
+    hintLabel.Text = options.HintText
+        or string.format("You have %d attempts. Wrong key reduces attempts — at 0 you will be kicked.", maxAttempts)
+    hintLabel.TextColor3 = THEME.TextDim
     hintLabel.TextWrapped = true
     hintLabel.Font = Enum.Font.Gotham
-    hintLabel.TextSize = 12
+    hintLabel.TextSize = 11
     hintLabel.TextXAlignment = Enum.TextXAlignment.Left
     hintLabel.TextYAlignment = Enum.TextYAlignment.Top
-    hintLabel.ZIndex = 6
-    hintLabel.Parent = rightContainer
+    hintLabel.ZIndex = 8
+    hintLabel.Parent = rightCard
 
     local verifying = false
     local destroyed = false
 
     local function setStatus(textValue, color)
         statusLabel.Text = textValue
-        statusLabel.TextColor3 = color
+        statusLabel.TextColor3 = color or THEME.TextMuted
     end
+
+    local function updateAttemptsLabel()
+        attemptsValue.Text = tostring(attemptsLeft)
+        if attemptsLeft <= 1 then
+            attemptsValue.TextColor3 = THEME.Error
+        elseif attemptsLeft <= 2 then
+            attemptsValue.TextColor3 = THEME.Warning
+        else
+            attemptsValue.TextColor3 = THEME.TextMuted
+        end
+    end
+    updateAttemptsLabel()
 
     local function shakePanel()
         local originalPosition = panel.Position
@@ -4568,96 +4813,81 @@ function Library:CreateKeySystem(options)
             originalPosition,
         }
         for _, position in ipairs(sequence) do
-            TweenService:Create(panel, TweenInfo.new(0.045), {
-                Position = position,
-            }):Play()
+            TweenService:Create(panel, TweenInfo.new(0.045), { Position = position }):Play()
             task.wait(0.045)
         end
     end
 
     local function destroyVisuals(afterClose)
         if destroyed then
-            if afterClose then
-                task.spawn(afterClose)
-            end
+            if afterClose then task.spawn(afterClose) end
             return
         end
         destroyed = true
         timeThread = false
 
-        -- Smooth blur fade-out first, then panel — clean handoff to main menu
         local blurFade = TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
         local panelFade = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
-        TweenService:Create(blur, blurFade, {Size = 0}):Play()
-        TweenService:Create(backdrop, panelFade, {BackgroundTransparency = 1}):Play()
-        TweenService:Create(gradientOverlay, panelFade, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(blur, blurFade, { Size = 0 }):Play()
+        TweenService:Create(backdrop, panelFade, { BackgroundTransparency = 1 }):Play()
+        TweenService:Create(gradientOverlay, panelFade, { BackgroundTransparency = 1 }):Play()
         TweenService:Create(panel, panelFade, {
             BackgroundTransparency = 1,
-            Size = UDim2.fromOffset(520, 240),
+            Size = UDim2.fromOffset(540, 280),
             Position = UDim2.fromScale(0.5, 0.48),
         }):Play()
-        TweenService:Create(panelStroke, panelFade, {Transparency = 1}):Play()
-        TweenService:Create(panelImage, panelFade, {ImageTransparency = 1}):Play()
-        TweenService:Create(panelTint, panelFade, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(panelStroke, panelFade, { Transparency = 1 }):Play()
+        TweenService:Create(panelImage, panelFade, { ImageTransparency = 1 }):Play()
+        TweenService:Create(panelTint, panelFade, { BackgroundTransparency = 1 }):Play()
 
         for _, desc in ipairs(panel:GetDescendants()) do
             if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
-                TweenService:Create(desc, panelFade, {TextTransparency = 1}):Play()
+                TweenService:Create(desc, panelFade, { TextTransparency = 1 }):Play()
                 if desc:IsA("TextButton") or desc:IsA("TextBox") then
                     pcall(function()
-                        TweenService:Create(desc, panelFade, {BackgroundTransparency = 1}):Play()
+                        TweenService:Create(desc, panelFade, { BackgroundTransparency = 1 }):Play()
                     end)
                 end
             elseif desc:IsA("ImageLabel") and desc ~= panelImage then
-                TweenService:Create(desc, panelFade, {ImageTransparency = 1}):Play()
+                TweenService:Create(desc, panelFade, { ImageTransparency = 1 }):Play()
             elseif desc:IsA("UIStroke") and desc ~= panelStroke then
-                TweenService:Create(desc, panelFade, {Transparency = 1}):Play()
-            elseif desc:IsA("Frame") and desc ~= panelTint then
+                TweenService:Create(desc, panelFade, { Transparency = 1 }):Play()
+            elseif desc:IsA("Frame") and desc ~= panelTint and desc ~= headerBar and desc ~= body then
                 pcall(function()
-                    TweenService:Create(desc, panelFade, {BackgroundTransparency = 1}):Play()
+                    TweenService:Create(desc, panelFade, { BackgroundTransparency = 1 }):Play()
                 end)
             end
         end
 
         task.wait(0.55)
-        if blur.Parent then
-            blur:Destroy()
-        end
-        if screen.Parent then
-            screen:Destroy()
-        end
-        if afterClose then
-            task.spawn(afterClose)
-        end
+        if blur.Parent then blur:Destroy() end
+        if screen.Parent then screen:Destroy() end
+        if afterClose then task.spawn(afterClose) end
     end
 
     local function closeKeySystem(afterClose)
         if destroyed then
-            if afterClose then
-                task.spawn(afterClose)
-            end
+            if afterClose then task.spawn(afterClose) end
             return
         end
-        if options.OnClose then
-            task.spawn(options.OnClose)
-        end
+        if options.OnClose then task.spawn(options.OnClose) end
         task.spawn(destroyVisuals, afterClose)
     end
 
     local function failKeyFinal()
-        setStatus("No attempts left. Kicking...", Color3.fromRGB(230, 90, 100))
+        setStatus("No attempts left. Kicking...", THEME.Error)
+        updateAttemptsLabel()
         task.spawn(shakePanel)
         TweenService:Create(blur, TweenInfo.new(0.55, Enum.EasingStyle.Quad), {
             Size = blurSizeOnFail,
         }):Play()
         TweenService:Create(keyInputStroke, TweenInfo.new(0.3), {
-            Color = Color3.fromRGB(220, 70, 80),
+            Color = THEME.Error,
+            Transparency = 0.1,
         }):Play()
 
-        if onFailure then
-            task.spawn(onFailure, keyInput.Text, 0)
-        end
+        if onFailure then task.spawn(onFailure, keyInput.Text, 0) end
 
         task.wait(kickDelay)
         if not destroyed then
@@ -4667,43 +4897,38 @@ function Library:CreateKeySystem(options)
 
     local function failKeySoft()
         attemptsLeft = attemptsLeft - 1
-        local msg
-        if attemptsLeft == 1 then
-            msg = "Invalid key. 1 attempt left."
-        else
-            msg = string.format("Invalid key. %d attempts left.", attemptsLeft)
-        end
-        setStatus(msg, Color3.fromRGB(230, 120, 100))
+        updateAttemptsLabel()
+        local msg = attemptsLeft == 1
+            and "Invalid key. 1 attempt left."
+            or string.format("Invalid key. %d attempts left.", attemptsLeft)
+        setStatus(msg, THEME.Error)
         task.spawn(shakePanel)
         TweenService:Create(keyInputStroke, TweenInfo.new(0.25), {
-            Color = Color3.fromRGB(220, 70, 80),
+            Color = THEME.Error,
+            Transparency = 0.15,
         }):Play()
         task.delay(0.8, function()
             if not destroyed and keyInputStroke and keyInputStroke.Parent then
                 TweenService:Create(keyInputStroke, TweenInfo.new(0.3), {
-                    Color = Color3.fromRGB(110, 70, 170),
+                    Color = THEME.Accent,
+                    Transparency = 0.4,
                 }):Play()
             end
         end)
-
-        if onFailure then
-            task.spawn(onFailure, keyInput.Text, attemptsLeft)
-        end
+        if onFailure then task.spawn(onFailure, keyInput.Text, attemptsLeft) end
     end
 
     local function verify()
-        if verifying or destroyed then
-            return
-        end
+        if verifying or destroyed then return end
 
         local submittedKey = keyInput.Text
         if submittedKey == "" then
-            setStatus("Enter a key first.", Color3.fromRGB(230, 170, 90))
+            setStatus("Enter a key first.", THEME.Warning)
             return false
         end
 
         verifying = true
-        setStatus("Verifying...", Color3.fromRGB(190, 170, 220))
+        setStatus("Verifying...", THEME.TextMuted)
         task.wait(options.VerifyDelay or 0.55)
 
         local valid = validKeys[submittedKey] == true
@@ -4713,14 +4938,12 @@ function Library:CreateKeySystem(options)
         end
 
         if valid then
-            setStatus("Key accepted. Welcome.", Color3.fromRGB(120, 220, 150))
+            setStatus("Key accepted. Welcome.", THEME.Success)
             TweenService:Create(keyInputStroke, TweenInfo.new(0.25), {
-                Color = Color3.fromRGB(100, 220, 150),
+                Color = THEME.Success,
                 Transparency = 0,
             }):Play()
-            if onSuccess then
-                task.spawn(onSuccess, submittedKey)
-            end
+            if onSuccess then task.spawn(onSuccess, submittedKey) end
             task.wait(options.SuccessDelay or 0.5)
             if autoDestroyOnValid then
                 closeKeySystem(function()
@@ -4735,17 +4958,14 @@ function Library:CreateKeySystem(options)
             return true
         end
 
-        -- Invalid key — consume an attempt
         if attemptsLeft <= 1 then
             attemptsLeft = 0
             verifying = false
             if options.KickOnInvalid ~= false then
                 failKeyFinal()
             else
-                setStatus("Invalid key. No attempts left.", Color3.fromRGB(230, 90, 100))
-                if onFailure then
-                    task.spawn(onFailure, submittedKey, 0)
-                end
+                setStatus("Invalid key. No attempts left.", THEME.Error)
+                if onFailure then task.spawn(onFailure, submittedKey, 0) end
             end
             return false
         end
@@ -4757,15 +4977,19 @@ function Library:CreateKeySystem(options)
 
     verifyButton.MouseButton1Click:Connect(verify)
 
+    keyInput.FocusLost:Connect(function(enter)
+        if enter then verify() end
+    end)
+
     getKeyButton.MouseButton1Click:Connect(function()
         if setclipboard then
             local ok = pcall(setclipboard, keyLink)
             if ok then
-                setStatus("Link copied — check your clipboard.", Color3.fromRGB(190, 170, 220))
+                setStatus("Link copied — check your clipboard.", THEME.AccentLight)
                 return
             end
         end
-        setStatus(keyLink, Color3.fromRGB(190, 170, 220))
+        setStatus(keyLink, THEME.AccentLight)
     end)
 
     closeButton.MouseButton1Click:Connect(function()
@@ -4776,35 +5000,27 @@ function Library:CreateKeySystem(options)
         end
     end)
 
-    -- Start panel slightly smaller for scale-in
-    panel.Size = UDim2.fromOffset(540, 250)
+    -- Entrance: smaller + transparent → menu-like pop-in
+    panel.Size = UDim2.fromOffset(540, 280)
+    panel.BackgroundTransparency = 1
 
     task.spawn(function()
         local fadeIn = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        local scaleIn = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        local scaleIn = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
-        TweenService:Create(backdrop, fadeIn, {
-            BackgroundTransparency = 0.15,
-        }):Play()
-        TweenService:Create(gradientOverlay, fadeIn, {
-            BackgroundTransparency = 0.35,
-        }):Play()
+        TweenService:Create(backdrop, fadeIn, { BackgroundTransparency = 0.2 }):Play()
+        TweenService:Create(gradientOverlay, fadeIn, { BackgroundTransparency = 0.4 }):Play()
         TweenService:Create(panel, scaleIn, {
             BackgroundTransparency = 0,
-            Size = UDim2.fromOffset(560, 260),
+            Size = UDim2.fromOffset(580, 300),
         }):Play()
-        TweenService:Create(panelStroke, fadeIn, {
-            Transparency = 0.3,
-        }):Play()
-        TweenService:Create(panelImage, fadeIn, {
-            ImageTransparency = 0.35,
-        }):Play()
-        TweenService:Create(panelTint, fadeIn, {
-            BackgroundTransparency = 0.25,
-        }):Play()
-        TweenService:Create(blur, TweenInfo.new(0.5), {
-            Size = 8,
-        }):Play()
+        TweenService:Create(panelStroke, fadeIn, { Transparency = 0.3 }):Play()
+        TweenService:Create(panelImage, fadeIn, { ImageTransparency = 0.82 }):Play()
+        TweenService:Create(panelTint, fadeIn, { BackgroundTransparency = 0.35 }):Play()
+        TweenService:Create(headerLine, fadeIn, { BackgroundTransparency = 0.4 }):Play()
+        TweenService:Create(logoLabel, fadeIn, { TextTransparency = 0 }):Play()
+        TweenService:Create(headerSub, fadeIn, { TextTransparency = 0 }):Play()
+        TweenService:Create(blur, TweenInfo.new(0.5), { Size = 10 }):Play()
     end)
 
     local api = {
@@ -4826,6 +5042,7 @@ function Library:CreateKeySystem(options)
     Library.KeySystem = api
     return api
 end
+
 
 function Library:GetKeySystem()
     return lastKeySystem
