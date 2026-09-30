@@ -4065,14 +4065,17 @@ function Library:CreateKeySystem(options)
     }
 
     local keyLink = options.KeyLink or "https://your-key-link-here.com"
-    local backgroundImage = options.BackgroundImage or "rbxassetid://122286881817734"
+    local backgroundImage = options.BackgroundImage or "rbxassetid://78464903954782"
     local kickMessage = options.KickMessage or "Invalid key. Please get a new key and try again."
-    local blurSizeOnFail = options.BlurSizeOnFail or 24
-    local kickDelay = options.KickDelay or 1.4
+    local blurSizeOnFail = options.BlurSizeOnFail or 28
+    local kickDelay = options.KickDelay or 1.5
     local kickOnClose = options.KickOnClose ~= false
     local autoDestroyOnValid = options.AutoDestroyOnValid ~= false
+    local maxAttempts = math.max(1, tonumber(options.MaxAttempts) or 3)
     local onSuccess = options.OnSuccess
     local onFailure = options.OnFailure
+
+    local attemptsLeft = maxAttempts
 
     local blur = Instance.new("BlurEffect")
     blur.Name = "KeySystemBlur"
@@ -4317,7 +4320,7 @@ function Library:CreateKeySystem(options)
     statusLabel.Name = "StatusLabel"
     statusLabel.Size = UDim2.fromOffset(288, 18)
     statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = options.StatusText or "Enter your key to continue"
+    statusLabel.Text = options.StatusText or string.format("Enter your key · %d attempts", maxAttempts)
     statusLabel.TextColor3 = Color3.fromRGB(190, 170, 220)
     statusLabel.Font = Enum.Font.Gotham
     statusLabel.TextSize = 13
@@ -4423,7 +4426,7 @@ function Library:CreateKeySystem(options)
     hintLabel.Position = UDim2.fromOffset(0, 134)
     hintLabel.Size = UDim2.fromOffset(288, 60)
     hintLabel.BackgroundTransparency = 1
-    hintLabel.Text = options.HintText or "Keys are free and take under a minute to grab. Wrong keys will remove you from the game."
+    hintLabel.Text = options.HintText or string.format("You have %d attempts. After that you will be kicked from the game.", maxAttempts)
     hintLabel.TextColor3 = Color3.fromRGB(140, 120, 165)
     hintLabel.TextWrapped = true
     hintLabel.Font = Enum.Font.Gotham
@@ -4444,17 +4447,18 @@ function Library:CreateKeySystem(options)
     local function shakePanel()
         local originalPosition = panel.Position
         local sequence = {
-            originalPosition + UDim2.fromOffset(-10, 0),
-            originalPosition + UDim2.fromOffset(10, 0),
-            originalPosition + UDim2.fromOffset(-6, 0),
-            originalPosition + UDim2.fromOffset(6, 0),
+            originalPosition + UDim2.fromOffset(-12, 0),
+            originalPosition + UDim2.fromOffset(12, 0),
+            originalPosition + UDim2.fromOffset(-8, 0),
+            originalPosition + UDim2.fromOffset(8, 0),
+            originalPosition + UDim2.fromOffset(-4, 0),
             originalPosition,
         }
         for _, position in ipairs(sequence) do
-            TweenService:Create(panel, TweenInfo.new(0.05), {
+            TweenService:Create(panel, TweenInfo.new(0.045), {
                 Position = position,
             }):Play()
-            task.wait(0.05)
+            task.wait(0.045)
         end
     end
 
@@ -4468,40 +4472,42 @@ function Library:CreateKeySystem(options)
         destroyed = true
         timeThread = false
 
-        local fadeInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        -- Smooth blur fade-out first, then panel — clean handoff to main menu
+        local blurFade = TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        local panelFade = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
-        TweenService:Create(blur, fadeInfo, {Size = 0}):Play()
-        TweenService:Create(backdrop, fadeInfo, {BackgroundTransparency = 1}):Play()
-        TweenService:Create(gradientOverlay, fadeInfo, {BackgroundTransparency = 1}):Play()
-        TweenService:Create(panel, fadeInfo, {
+        TweenService:Create(blur, blurFade, {Size = 0}):Play()
+        TweenService:Create(backdrop, panelFade, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(gradientOverlay, panelFade, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(panel, panelFade, {
             BackgroundTransparency = 1,
-            Size = UDim2.fromOffset(540, 250),
+            Size = UDim2.fromOffset(520, 240),
+            Position = UDim2.fromScale(0.5, 0.48),
         }):Play()
-        TweenService:Create(panelStroke, fadeInfo, {Transparency = 1}):Play()
-        TweenService:Create(panelImage, fadeInfo, {ImageTransparency = 1}):Play()
-        TweenService:Create(panelTint, fadeInfo, {BackgroundTransparency = 1}):Play()
+        TweenService:Create(panelStroke, panelFade, {Transparency = 1}):Play()
+        TweenService:Create(panelImage, panelFade, {ImageTransparency = 1}):Play()
+        TweenService:Create(panelTint, panelFade, {BackgroundTransparency = 1}):Play()
 
-        -- Fade all text / buttons inside panel
         for _, desc in ipairs(panel:GetDescendants()) do
             if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
-                TweenService:Create(desc, fadeInfo, {TextTransparency = 1}):Play()
+                TweenService:Create(desc, panelFade, {TextTransparency = 1}):Play()
                 if desc:IsA("TextButton") or desc:IsA("TextBox") then
                     pcall(function()
-                        TweenService:Create(desc, fadeInfo, {BackgroundTransparency = 1}):Play()
+                        TweenService:Create(desc, panelFade, {BackgroundTransparency = 1}):Play()
                     end)
                 end
             elseif desc:IsA("ImageLabel") and desc ~= panelImage then
-                TweenService:Create(desc, fadeInfo, {ImageTransparency = 1}):Play()
+                TweenService:Create(desc, panelFade, {ImageTransparency = 1}):Play()
             elseif desc:IsA("UIStroke") and desc ~= panelStroke then
-                TweenService:Create(desc, fadeInfo, {Transparency = 1}):Play()
+                TweenService:Create(desc, panelFade, {Transparency = 1}):Play()
             elseif desc:IsA("Frame") and desc ~= panelTint then
                 pcall(function()
-                    TweenService:Create(desc, fadeInfo, {BackgroundTransparency = 1}):Play()
+                    TweenService:Create(desc, panelFade, {BackgroundTransparency = 1}):Play()
                 end)
             end
         end
 
-        task.wait(0.45)
+        task.wait(0.55)
         if blur.Parent then
             blur:Destroy()
         end
@@ -4526,10 +4532,10 @@ function Library:CreateKeySystem(options)
         task.spawn(destroyVisuals, afterClose)
     end
 
-    local function failKey()
-        setStatus("Invalid key. Kicking...", Color3.fromRGB(230, 90, 100))
+    local function failKeyFinal()
+        setStatus("No attempts left. Kicking...", Color3.fromRGB(230, 90, 100))
         task.spawn(shakePanel)
-        TweenService:Create(blur, TweenInfo.new(0.5), {
+        TweenService:Create(blur, TweenInfo.new(0.55, Enum.EasingStyle.Quad), {
             Size = blurSizeOnFail,
         }):Play()
         TweenService:Create(keyInputStroke, TweenInfo.new(0.3), {
@@ -4537,12 +4543,38 @@ function Library:CreateKeySystem(options)
         }):Play()
 
         if onFailure then
-            task.spawn(onFailure, keyInput.Text)
+            task.spawn(onFailure, keyInput.Text, 0)
         end
 
         task.wait(kickDelay)
         if not destroyed then
             player:Kick(kickMessage)
+        end
+    end
+
+    local function failKeySoft()
+        attemptsLeft = attemptsLeft - 1
+        local msg
+        if attemptsLeft == 1 then
+            msg = "Invalid key. 1 attempt left."
+        else
+            msg = string.format("Invalid key. %d attempts left.", attemptsLeft)
+        end
+        setStatus(msg, Color3.fromRGB(230, 120, 100))
+        task.spawn(shakePanel)
+        TweenService:Create(keyInputStroke, TweenInfo.new(0.25), {
+            Color = Color3.fromRGB(220, 70, 80),
+        }):Play()
+        task.delay(0.8, function()
+            if not destroyed and keyInputStroke and keyInputStroke.Parent then
+                TweenService:Create(keyInputStroke, TweenInfo.new(0.3), {
+                    Color = Color3.fromRGB(110, 70, 170),
+                }):Play()
+            end
+        end)
+
+        if onFailure then
+            task.spawn(onFailure, keyInput.Text, attemptsLeft)
         end
     end
 
@@ -4559,7 +4591,7 @@ function Library:CreateKeySystem(options)
 
         verifying = true
         setStatus("Verifying...", Color3.fromRGB(190, 170, 220))
-        task.wait(options.VerifyDelay or 0.6)
+        task.wait(options.VerifyDelay or 0.55)
 
         local valid = validKeys[submittedKey] == true
         if not valid and type(options.ValidateKey) == "function" then
@@ -4568,11 +4600,15 @@ function Library:CreateKeySystem(options)
         end
 
         if valid then
-            setStatus("Key accepted.", Color3.fromRGB(120, 220, 150))
+            setStatus("Key accepted. Welcome.", Color3.fromRGB(120, 220, 150))
+            TweenService:Create(keyInputStroke, TweenInfo.new(0.25), {
+                Color = Color3.fromRGB(100, 220, 150),
+                Transparency = 0,
+            }):Play()
             if onSuccess then
                 task.spawn(onSuccess, submittedKey)
             end
-            task.wait(options.SuccessDelay or 0.4)
+            task.wait(options.SuccessDelay or 0.5)
             if autoDestroyOnValid then
                 closeKeySystem(function()
                     if options.OnSuccessComplete then
@@ -4586,15 +4622,23 @@ function Library:CreateKeySystem(options)
             return true
         end
 
-        verifying = false
-        if options.KickOnInvalid ~= false then
-            failKey()
-        else
-            setStatus("Invalid key.", Color3.fromRGB(230, 90, 100))
-            if onFailure then
-                task.spawn(onFailure, submittedKey)
+        -- Invalid key — consume an attempt
+        if attemptsLeft <= 1 then
+            attemptsLeft = 0
+            verifying = false
+            if options.KickOnInvalid ~= false then
+                failKeyFinal()
+            else
+                setStatus("Invalid key. No attempts left.", Color3.fromRGB(230, 90, 100))
+                if onFailure then
+                    task.spawn(onFailure, submittedKey, 0)
+                end
             end
+            return false
         end
+
+        failKeySoft()
+        verifying = false
         return false
     end
 
@@ -4680,6 +4724,12 @@ end
 ----------------------------------------------------------------
 function Library:CreateLoadingScreen(options)
     options = options or {}
+    -- Dragon from main UI (content / watermark)
+    local dragonId = options.Image or options.BackgroundImage or "rbxassetid://78464903954782"
+    local holdTime = tonumber(options.HoldTime) or 1.35
+    local fadeInTime = tonumber(options.FadeInTime) or 1.0
+    local fadeOutTime = tonumber(options.FadeOutTime) or 0.85
+
     local screen = Instance.new("ScreenGui")
     screen.Name = "MSILoadingScreen"
     screen.ResetOnSpawn = false
@@ -4705,8 +4755,8 @@ function Library:CreateLoadingScreen(options)
     local gradient = Instance.new("UIGradient")
     gradient.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(45, 0, 80)),
+        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(0, 0, 0)),
+        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(55, 0, 95)),
     })
     gradient.Rotation = 90
     gradient.Parent = glow
@@ -4716,11 +4766,11 @@ function Library:CreateLoadingScreen(options)
         local t = 0
         while pulseRunning and background.Parent do
             t = t + RunService.RenderStepped:Wait()
-            local pulse = 0.55 + math.sin(t * 0.6) * 0.15
+            local pulse = 0.55 + math.sin(t * 0.7) * 0.18
             gradient.Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 0, 0)),
-                ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 0, 0)),
-                ColorSequenceKeypoint.new(1.0, Color3.fromRGB(45 * pulse, 0, 80 * pulse)),
+                ColorSequenceKeypoint.new(0.55, Color3.fromRGB(0, 0, 0)),
+                ColorSequenceKeypoint.new(1.0, Color3.fromRGB(55 * pulse, 0, 95 * pulse)),
             })
         end
     end)
@@ -4729,7 +4779,7 @@ function Library:CreateLoadingScreen(options)
     titleContainer.Name = "TitleContainer"
     titleContainer.AnchorPoint = Vector2.new(0.5, 0.5)
     titleContainer.Position = UDim2.fromScale(0.5, 0.5)
-    titleContainer.Size = UDim2.fromScale(0.95, 0.4)
+    titleContainer.Size = UDim2.fromScale(0.72, 0.55)
     titleContainer.BackgroundTransparency = 1
     titleContainer.Parent = background
 
@@ -4737,40 +4787,44 @@ function Library:CreateLoadingScreen(options)
     titleImage.Name = "TitleImage"
     titleImage.AnchorPoint = Vector2.new(0.5, 0.5)
     titleImage.Position = UDim2.fromScale(0.5, 0.5)
-    titleImage.Size = UDim2.fromScale(1, 1)
+    titleImage.Size = UDim2.fromScale(0.88, 0.88)
     titleImage.BackgroundTransparency = 1
-    titleImage.Image = options.Image or options.BackgroundImage or "rbxassetid://122286881817734"
+    titleImage.Image = dragonId
     titleImage.ImageTransparency = 1
     titleImage.ScaleType = Enum.ScaleType.Fit
     titleImage.Parent = titleContainer
 
     task.spawn(function()
-        task.wait(0.25)
+        task.wait(0.2)
 
-        -- subtle purple glow fades in first, then the dragon.
+        -- Purple glow rises, then dragon scales + fades in
         TweenService:Create(
             glow,
-            TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+            TweenInfo.new(fadeInTime * 0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
             {BackgroundTransparency = 0}
         ):Play()
 
-        local fadeIn = TweenService:Create(
+        TweenService:Create(
             titleImage,
-            TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-            {ImageTransparency = 0}
-        )
-        fadeIn:Play()
-        fadeIn.Completed:Wait()
+            TweenInfo.new(fadeInTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {
+                ImageTransparency = 0,
+                Size = UDim2.fromScale(1, 1),
+            }
+        ):Play()
 
-        task.wait(1.1)
+        task.wait(fadeInTime + holdTime)
 
-        local fadeOutTime = 0.8
         pulseRunning = false
 
+        -- Fade out dragon + glow, keep pure black so KeySystem handoff has no flash
         TweenService:Create(
             titleImage,
             TweenInfo.new(fadeOutTime, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-            {ImageTransparency = 1}
+            {
+                ImageTransparency = 1,
+                Size = UDim2.fromScale(1.06, 1.06),
+            }
         ):Play()
 
         TweenService:Create(
@@ -4779,17 +4833,13 @@ function Library:CreateLoadingScreen(options)
             {BackgroundTransparency = 1}
         ):Play()
 
-        -- Fade title/glow out but keep solid black background so the
-        -- handoff to KeySystem (also dark) has no flash of the game world.
         task.wait(fadeOutTime)
 
         if type(options.OnComplete) == "function" then
-            -- Start next stage while black screen is still up
             task.spawn(options.OnComplete)
         end
 
-        -- Brief overlap, then remove loading screen
-        task.wait(0.15)
+        task.wait(0.12)
         if screen.Parent then
             screen:Destroy()
         end
@@ -4798,22 +4848,31 @@ function Library:CreateLoadingScreen(options)
     return screen
 end
 
+
 ----------------------------------------------------------------
 -- MAIN MENU VISIBILITY / BOOT SEQUENCE
 ----------------------------------------------------------------
 function Library:Show()
     menuOpen = true
-    window.Visible = true
     hideTooltip()
 
-    TweenService:Create(
-        window,
-        TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        {
-            Size = UDim2.fromOffset(960, 600),
-            BackgroundTransparency = 0,
-        }
-    ):Play()
+    -- Start slightly smaller / transparent for a premium entrance
+    window.Visible = true
+    window.Size = UDim2.fromOffset(920, 560)
+    window.BackgroundTransparency = 1
+    window.Position = UDim2.fromScale(0.5, 0.52)
+
+    local openInfo = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local fadeInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    TweenService:Create(window, openInfo, {
+        Size = UDim2.fromOffset(960, 600),
+        Position = UDim2.fromScale(0.5, 0.5),
+    }):Play()
+
+    TweenService:Create(window, fadeInfo, {
+        BackgroundTransparency = 0,
+    }):Play()
 
     return self
 end
@@ -4846,8 +4905,9 @@ function Library:Launch(options)
     -- Force closed state before boot sequence
     menuOpen = false
     window.Visible = false
-    window.Size = UDim2.fromOffset(960, 0)
+    window.Size = UDim2.fromOffset(920, 560)
     window.BackgroundTransparency = 1
+    window.Position = UDim2.fromScale(0.5, 0.52)
 
     local loadingOptions = options.LoadingScreen or {}
     local keyOptions = options.KeySystem or {}
@@ -4855,8 +4915,8 @@ function Library:Launch(options)
     local useKeySystem = keyOptions.Enabled ~= false
 
     local function finishBoot(key)
-        -- Small beat after key-system fade-out, then menu fade-in
-        task.wait(0.05)
+        -- Blur already gone; short beat then premium menu entrance
+        task.wait(0.08)
         self:Show()
         if type(options.OnReady) == "function" then
             task.spawn(options.OnReady, key)
@@ -4873,14 +4933,17 @@ function Library:Launch(options)
         local userSuccess = launchKeyOptions.OnSuccess
         local userComplete = launchKeyOptions.OnSuccessComplete
 
-        -- Ensure key system fades out before we open the menu
+        -- Defaults for a clean 3-attempt key flow
+        if launchKeyOptions.MaxAttempts == nil then
+            launchKeyOptions.MaxAttempts = 3
+        end
         launchKeyOptions.AutoDestroyOnValid = true
         launchKeyOptions.OnSuccess = function(key)
             if userSuccess then
                 task.spawn(userSuccess, key)
             end
         end
-        -- OnSuccessComplete is called AFTER destroyVisuals finishes (fade-out done)
+        -- Fires AFTER blur + panel fully faded out
         launchKeyOptions.OnSuccessComplete = function(key)
             if userComplete then
                 task.spawn(userComplete, key)
@@ -4893,7 +4956,10 @@ function Library:Launch(options)
 
     if useLoading then
         loadingOptions = table.clone(loadingOptions)
-        -- Loading fades out, then OnComplete fires → key system fades in
+        -- Dragon from main UI unless user overrides Image
+        if not loadingOptions.Image and not loadingOptions.BackgroundImage then
+            loadingOptions.Image = "rbxassetid://78464903954782"
+        end
         loadingOptions.OnComplete = startKeySystem
         self:CreateLoadingScreen(loadingOptions)
     else
@@ -4902,6 +4968,7 @@ function Library:Launch(options)
 
     return self
 end
+
 
 ----------------------------------------------------------------
 -- PUBLIC COMPONENT HELPERS
