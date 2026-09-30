@@ -107,6 +107,75 @@ local function toHex(c)
         math.floor(c.R*255+0.5), math.floor(c.G*255+0.5), math.floor(c.B*255+0.5))
 end
 
+-- Serializable color / key helpers for config save-load
+local function colorToTable(c)
+    if typeof(c) ~= "Color3" then return c end
+    return {
+        __type = "Color3",
+        R = math.floor(c.R * 255 + 0.5),
+        G = math.floor(c.G * 255 + 0.5),
+        B = math.floor(c.B * 255 + 0.5),
+    }
+end
+
+local function tableToColor(v)
+    if typeof(v) == "Color3" then return v end
+    if type(v) == "table" then
+        local r = v.R or v.r or v[1]
+        local g = v.G or v.g or v[2]
+        local b = v.B or v.b or v[3]
+        if r and g and b then
+            -- support both 0-1 and 0-255
+            if r <= 1 and g <= 1 and b <= 1 then
+                return Color3.new(r, g, b)
+            end
+            return Color3.fromRGB(
+                math.clamp(math.floor(r + 0.5), 0, 255),
+                math.clamp(math.floor(g + 0.5), 0, 255),
+                math.clamp(math.floor(b + 0.5), 0, 255)
+            )
+        end
+        if type(v.hex) == "string" then
+            local h = v.hex:gsub("#", "")
+            if #h == 6 then
+                return Color3.fromRGB(
+                    tonumber(h:sub(1, 2), 16),
+                    tonumber(h:sub(3, 4), 16),
+                    tonumber(h:sub(5, 6), 16)
+                )
+            end
+        end
+    elseif type(v) == "string" then
+        local h = v:gsub("#", "")
+        if #h == 6 then
+            return Color3.fromRGB(
+                tonumber(h:sub(1, 2), 16),
+                tonumber(h:sub(3, 4), 16),
+                tonumber(h:sub(5, 6), 16)
+            )
+        end
+    end
+    return nil
+end
+
+local function keyToString(k)
+    if k == nil then return nil end
+    if typeof(k) == "EnumItem" then
+        return tostring(k):gsub("Enum.KeyCode.", "")
+    end
+    return tostring(k)
+end
+
+local function stringToKey(s)
+    if s == nil or s == "" or s == "None" then return nil end
+    if typeof(s) == "EnumItem" then return s end
+    local ok, key = pcall(function()
+        return Enum.KeyCode[tostring(s)]
+    end)
+    if ok and key then return key end
+    return nil
+end
+
 
 -- Safe file API
 local FileAPI = {}
@@ -302,7 +371,19 @@ function ConfigManager.capture()
     local data = {}
     for id, comp in pairs(ConfigManager.components) do
         if comp.get then
-            data[id] = comp.get()
+            local value = comp.get()
+            -- normalize Color3 / KeyCode / combo for JSON
+            if typeof(value) == "Color3" then
+                value = colorToTable(value)
+            elseif typeof(value) == "EnumItem" then
+                value = keyToString(value)
+            elseif type(value) == "table" and (value.key ~= nil or value.value ~= nil) then
+                value = {
+                    value = value.value,
+                    key = keyToString(value.key),
+                }
+            end
+            data[id] = value
         end
     end
     return data
@@ -311,9 +392,34 @@ end
 function ConfigManager.apply(data)
     if type(data) ~= "table" then return false end
     for id, value in pairs(data) do
-        local comp = ConfigManager.components[id]
-        if comp and comp.set then
-            pcall(function() comp.set(value) end)
+        if id ~= "_meta" then
+            local comp = ConfigManager.components[id]
+            if comp and comp.set then
+                pcall(function()
+                    -- restore Color3 from table / hex
+                    if type(value) == "table" and (value.__type == "Color3" or value.R or value.r or value[1]) then
+                        local c = tableToColor(value)
+                        if c then
+                            comp.set(c)
+                            return
+                        end
+                    end
+                    -- restore combo {value, key}
+                    if type(value) == "table" and value.value ~= nil then
+                        comp.set({
+                            value = value.value,
+                            key = stringToKey(value.key),
+                        })
+                        return
+                    end
+                    -- restore KeyCode from string
+                    if type(value) == "string" and Enum.KeyCode[value] then
+                        comp.set(stringToKey(value))
+                        return
+                    end
+                    comp.set(value)
+                end)
+            end
         end
     end
     return true
@@ -2325,14 +2431,19 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     local comp = {
         id = id,
         row = row,
-        get = function() return currentColor end,
+        get = function()
+            return colorToTable(currentColor)
+        end,
         set = function(c)
-            if typeof(c) == "Color3" then
-                setColor(c, false)
-                for _, ref in ipairs(sliderRefs) do
-                    setSliderValue(ref, channelValue(currentColor, ref.name), false)
-                    updateTrackGradient(ref)
-                end
+            local resolved = tableToColor(c)
+            if not resolved and typeof(c) == "Color3" then
+                resolved = c
+            end
+            if not resolved then return end
+            setColor(resolved, false)
+            for _, ref in ipairs(sliderRefs) do
+                setSliderValue(ref, channelValue(currentColor, ref.name), false)
+                updateTrackGradient(ref)
             end
         end,
         onChange = function(cb) table.insert(callbacks, cb) end,
@@ -2340,6 +2451,8 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
             ConfigManager.unregister(id)
             row:Destroy()
         end,
+        -- live Color3 for scripts that need it directly
+        getColor3 = function() return currentColor end,
     }
     ConfigManager.register(id, comp)
     return comp
