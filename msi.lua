@@ -109,24 +109,21 @@ end
 
 -- Live clock (DateTime → os.date → tick fallback) so time/date always tick
 local function clockParts()
-    local ok, dt = pcall(function()
-        return DateTime.now()
+    -- Prefer DateTime:ToLocalTime() numeric fields (FormatLocalTime is locale-flaky)
+    local ok, parts = pcall(function()
+        local t = DateTime.now():ToLocalTime()
+        return {
+            date = string.format("%02d.%02d.%04d", t.Day, t.Month, t.Year),
+            time = string.format("%02d:%02d:%02d", t.Hour, t.Minute, t.Second),
+            short = string.format("%02d:%02d", t.Hour, t.Minute),
+            isoDate = string.format("%04d-%02d-%02d", t.Year, t.Month, t.Day),
+        }
     end)
-    if ok and dt then
-        local ok2, formatted = pcall(function()
-            return {
-                date = dt:FormatLocalTime("dd.MM.yyyy", "en-us"),
-                time = dt:FormatLocalTime("HH:mm:ss", "en-us"),
-                short = dt:FormatLocalTime("HH:mm", "en-us"),
-                isoDate = dt:FormatLocalTime("yyyy-MM-dd", "en-us"),
-            }
-        end)
-        if ok2 and formatted then
-            return formatted
-        end
+    if ok and parts then
+        return parts
     end
 
-    local ok3, parts = pcall(function()
+    local ok2, parts2 = pcall(function()
         return {
             date = os.date("%d.%m.%Y"),
             time = os.date("%H:%M:%S"),
@@ -134,19 +131,17 @@ local function clockParts()
             isoDate = os.date("%Y-%m-%d"),
         }
     end)
-    if ok3 and parts then
-        return parts
+    if ok2 and parts2 then
+        return parts2
     end
 
-    -- last resort from unix-ish tick (UTC-ish, still moving)
     local t = math.floor(tick() % 86400)
     local h = math.floor(t / 3600)
     local m = math.floor((t % 3600) / 60)
     local s = t % 60
-    local timeStr = string.format("%02d:%02d:%02d", h, m, s)
     return {
         date = "--.--.----",
-        time = timeStr,
+        time = string.format("%02d:%02d:%02d", h, m, s),
         short = string.format("%02d:%02d", h, m),
         isoDate = "----.--.--",
     }
@@ -3897,6 +3892,9 @@ toggleMenu = function()
 
     if menuOpen then
         window.Visible = true
+        if watermark then
+            watermark.Visible = true
+        end
 
         TweenService:Create(
             window,
@@ -3907,6 +3905,10 @@ toggleMenu = function()
             }
         ):Play()
     else
+        if watermark then
+            watermark.Visible = false
+        end
+
         TweenService:Create(
             window,
             TweenInfo.new(0.25, Enum.EasingStyle.Quad),
@@ -4028,6 +4030,7 @@ watermark.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 watermark.BackgroundTransparency = 0
 watermark.BorderSizePixel = 0
 watermark.ZIndex = 120
+watermark.Visible = false
 watermark.Parent = screenGui
 corner(watermark, 8)
 stroke(watermark, THEME.Accent, 1, 0.45)
@@ -4439,22 +4442,20 @@ function Library:CreateKeySystem(options)
     headerLine.ZIndex = 7
     headerLine.Parent = headerBar
 
-    local logoLabel = Instance.new("TextLabel")
+    -- Same MSI.LUA wordmark as main menu header
+    local logoLabel = Instance.new("ImageLabel")
     logoLabel.BackgroundTransparency = 1
-    logoLabel.Position = UDim2.fromOffset(18, 0)
-    logoLabel.Size = UDim2.new(0, 160, 1, 0)
-    logoLabel.Text = "MSI.LUA"
-    logoLabel.TextColor3 = THEME.AccentLight
-    logoLabel.Font = Enum.Font.GothamBold
-    logoLabel.TextSize = 18
-    logoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    logoLabel.TextTransparency = 1
+    logoLabel.Position = UDim2.fromOffset(14, 8)
+    logoLabel.Size = UDim2.fromOffset(130, 36)
+    logoLabel.Image = "rbxassetid://118298605561190"
+    logoLabel.ImageTransparency = 1
+    logoLabel.ScaleType = Enum.ScaleType.Fit
     logoLabel.ZIndex = 7
     logoLabel.Parent = headerBar
 
     local headerSub = Instance.new("TextLabel")
     headerSub.BackgroundTransparency = 1
-    headerSub.Position = UDim2.fromOffset(120, 0)
+    headerSub.Position = UDim2.fromOffset(150, 0)
     headerSub.Size = UDim2.new(0, 140, 1, 0)
     headerSub.Text = "KEY SYSTEM"
     headerSub.TextColor3 = THEME.TextDim
@@ -5018,7 +5019,7 @@ function Library:CreateKeySystem(options)
         TweenService:Create(panelImage, fadeIn, { ImageTransparency = 0.82 }):Play()
         TweenService:Create(panelTint, fadeIn, { BackgroundTransparency = 0.35 }):Play()
         TweenService:Create(headerLine, fadeIn, { BackgroundTransparency = 0.4 }):Play()
-        TweenService:Create(logoLabel, fadeIn, { TextTransparency = 0 }):Play()
+        TweenService:Create(logoLabel, fadeIn, { ImageTransparency = 0 }):Play()
         TweenService:Create(headerSub, fadeIn, { TextTransparency = 0 }):Play()
         TweenService:Create(blur, TweenInfo.new(0.5), { Size = 10 }):Play()
     end)
@@ -5192,6 +5193,10 @@ function Library:Show()
     window.BackgroundTransparency = 1
     window.Position = UDim2.fromScale(0.5, 0.52)
 
+    if watermark then
+        watermark.Visible = true
+    end
+
     local openInfo = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
     local fadeInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
@@ -5210,6 +5215,10 @@ end
 function Library:Hide()
     menuOpen = false
     hideTooltip()
+
+    if watermark then
+        watermark.Visible = false
+    end
 
     TweenService:Create(
         window,
@@ -5238,6 +5247,9 @@ function Library:Launch(options)
     window.Size = UDim2.fromOffset(920, 560)
     window.BackgroundTransparency = 1
     window.Position = UDim2.fromScale(0.5, 0.52)
+    if watermark then
+        watermark.Visible = false
+    end
 
     local loadingOptions = options.LoadingScreen or {}
     local keyOptions = options.KeySystem or {}
