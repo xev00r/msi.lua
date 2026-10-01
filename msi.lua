@@ -1691,6 +1691,9 @@ local function createDropdownRow(card, order, label, options, default, opts)
             if checkLabels[v] then checkLabels[v].Text = "✓" end
             selectedLabel.Text = v
             currentSelection = v
+            for _, cb in ipairs(callbacks) do
+                task.spawn(cb, v)
+            end
         end,
         onChange = function(cb) table.insert(callbacks, cb) end,
         destroy = function()
@@ -1819,6 +1822,12 @@ local function createKeybindRow(card, order, label, defaultKey, options)
                 conn:Disconnect()
                 for _, cb in ipairs(callbacks) do task.spawn(cb, currentKey) end
             elseif inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                if options.noClear then
+                    listening = false
+                    keybindListening = false
+                    conn:Disconnect()
+                    return
+                end
                 currentKey = nil
                 btn.Text = "None"
                 btn.TextColor3 = THEME.TextMuted
@@ -1843,6 +1852,7 @@ local function createKeybindRow(card, order, label, defaultKey, options)
                 btn.Text = "None"
                 btn.TextColor3 = THEME.TextMuted
             end
+            for _, cb in ipairs(callbacks) do task.spawn(cb, currentKey) end
         end,
         onChange = function(cb) table.insert(callbacks, cb) end,
         destroy = function()
@@ -1860,11 +1870,15 @@ local function createKeybindRow(card, order, label, defaultKey, options)
 end
 
 local function createMenuKeybindRow(card, order, label, defaultKey, options)
+    options = options or {}
+    options.noClear = true
     local initialKey = defaultKey or toggleKey
     local comp = createKeybindRow(card, order, label or "Menu key", initialKey, options)
 
     comp:onChange(function(newKey)
-        toggleKey = newKey
+        if newKey then
+            toggleKey = newKey
+        end
     end)
 
     toggleKey = initialKey
@@ -1988,7 +2002,11 @@ local function createTextBoxRow(card, order, labelText, placeholder, defaultText
     local comp = {
         id = id, row = row,
         get = function() return currentText end,
-        set = function(v) currentText = tostring(v or ""); box.Text = currentText end,
+        set = function(v)
+            currentText = tostring(v or "")
+            box.Text = currentText
+            for _, cb in ipairs(callbacks) do task.spawn(cb, currentText) end
+        end,
         onChange = function(cb) table.insert(callbacks, cb) end,
         destroy = function() ConfigManager.unregister(id); row:Destroy() end,
     }
@@ -2172,6 +2190,7 @@ local function createComboRow(card, order, labelText, comboOptions, defaultValue
             if v.value and table.find(comboOptions, v.value) then currentValue = v.value; selected.Text = v.value end
             currentKey = v.key
             keyButton.Text = keyName(currentKey)
+            for _, cb in ipairs(callbacks) do task.spawn(cb, currentValue, currentKey) end
         end,
         onChange = function(cb) table.insert(callbacks, cb) end,
         destroy = function()
@@ -3889,6 +3908,13 @@ do
     function Library:CreateTab(name, icon)
         local tab = rawCreateTab(self, name, icon)
         self:_installTabMethods(tab)
+
+        if not self._buildingSettings and name ~= "Settings" then
+            task.defer(function()
+                self:_relocateSettingsTab()
+            end)
+        end
+
         return tab
     end
 end
@@ -4094,6 +4120,10 @@ end)
 ----------------------------------------------------------------
 UserInputService.InputBegan:Connect(function(inp, gpe)
     if gpe then
+        return
+    end
+
+    if UserInputService:GetFocusedTextBox() then
         return
     end
 
@@ -5383,6 +5413,73 @@ function Library:CreateLoadingScreen(options)
     end)
 
     return screen
+end
+
+
+----------------------------------------------------------------
+-- BUILT-IN SETTINGS TAB
+----------------------------------------------------------------
+function Library:_populateSettingsTab(tab)
+    local general = tab:CreateSection("Menu", "left")
+
+    general:CreateMenuKeybind("Menu keybind", toggleKey, {id = "_settings_menu_key"})
+
+    general:CreateKeybindListToggle("Show keybind list", keybindListEnabled, {id = "_settings_kb_list"})
+
+    local autoToggle = general:CreateToggle("Auto save config", ConfigManager.autoSave, {id = "_settings_autosave"})
+    autoToggle:onChange(function(v) ConfigManager.autoSave = v end)
+
+    local autoSlider = general:CreateSlider("Auto save interval (s)", 10, 300, ConfigManager.autoSaveInterval, 0, {id = "_settings_autosave_interval"})
+    autoSlider:onChange(function(v) ConfigManager.autoSaveInterval = v end)
+
+    local configs = tab:CreateSection("Configs", "right")
+
+    local function refreshList()
+        local list = FileAPI.list()
+        if #list == 0 then list = {ConfigManager.current} end
+        return list
+    end
+
+    local nameBox = configs:CreateTextBox("Config name", "my_config", ConfigManager.current, {id = "_settings_config_name"})
+    local listDropdown = configs:CreateDropdown("Saved configs", refreshList(), ConfigManager.current, {id = "_settings_config_list"})
+
+    listDropdown:onChange(function(v)
+        nameBox.set(v)
+    end)
+
+    configs:CreateButton("Save", THEME.Accent, function()
+        local name = nameBox.get()
+        if name == "" then return end
+        ConfigManager.save(name)
+        task.defer(function() self:_relocateSettingsTab() end)
+    end)
+
+    configs:CreateButton("Load", THEME.PanelAlt, function()
+        local name = nameBox.get()
+        if name == "" then return end
+        ConfigManager.load(name)
+    end)
+
+    configs:CreateButton("Delete", THEME.Error, function()
+        local name = nameBox.get()
+        if name == "" then return end
+        ConfigManager.delete(name)
+        task.defer(function() self:_relocateSettingsTab() end)
+    end)
+end
+
+function Library:_relocateSettingsTab()
+    if self._buildingSettings then return end
+    if self._settingsTab then
+        local old = self._settingsTab
+        self._settingsTab = nil
+        old:Destroy()
+    end
+    self._buildingSettings = true
+    local tab = self:CreateTab("Settings", ICONS.Settings)
+    self._buildingSettings = false
+    self._settingsTab = tab
+    self:_populateSettingsTab(tab)
 end
 
 
