@@ -1783,6 +1783,396 @@ local function createDropdownRow(card, order, label, options, default, opts)
     return comp
 end
 
+local function createNumberBoxRow(card, order, label, min, max, default, decimals, opts)
+    opts = opts or {}
+    local id = opts.id or nextId("numberbox")
+    local step = tonumber(opts.step) or ((decimals and decimals > 0) and (10 ^ (-decimals)) or 1)
+
+    local row = Instance.new("Frame")
+    row.LayoutOrder = order
+    row.Size = UDim2.new(1, 0, 0, 42)
+    row.BackgroundTransparency = 1
+    row.ZIndex = 3
+    row.Parent = card
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -120, 0, 16)
+    title.Text = label
+    title.TextColor3 = THEME.TextPrimary
+    title.Font = Enum.Font.Gotham
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 3
+    title.Parent = row
+
+    local box = Instance.new("TextBox")
+    box.AnchorPoint = Vector2.new(1, 0)
+    box.Position = UDim2.new(1, 0, 0, 0)
+    box.Size = UDim2.fromOffset(76, 26)
+    box.BackgroundColor3 = THEME.PanelAlt
+    box.BackgroundTransparency = 0.05
+    box.TextColor3 = THEME.TextPrimary
+    box.PlaceholderColor3 = THEME.TextDim
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 12
+    box.TextXAlignment = Enum.TextXAlignment.Center
+    box.ClearTextOnFocus = false
+    box.ZIndex = 4
+    box.Parent = row
+    corner(box, 8)
+    stroke(box, THEME.Accent, 1, 0.4)
+
+    local minus = Instance.new("TextButton")
+    minus.AnchorPoint = Vector2.new(1, 0)
+    minus.Position = UDim2.new(1, -82, 0, 0)
+    minus.Size = UDim2.fromOffset(26, 26)
+    minus.BackgroundColor3 = THEME.PanelAlt
+    minus.Text = "-"
+    minus.TextColor3 = THEME.AccentLight
+    minus.Font = Enum.Font.GothamBold
+    minus.TextSize = 14
+    minus.AutoButtonColor = false
+    minus.ZIndex = 4
+    minus.Parent = row
+    corner(minus, 8)
+    stroke(minus, THEME.Accent, 1, 0.5)
+
+    local plus = Instance.new("TextButton")
+    plus.AnchorPoint = Vector2.new(1, 0)
+    plus.Position = UDim2.new(1, -114, 0, 0)
+    plus.Size = UDim2.fromOffset(26, 26)
+    plus.BackgroundColor3 = THEME.PanelAlt
+    plus.Text = "+"
+    plus.TextColor3 = THEME.AccentLight
+    plus.Font = Enum.Font.GothamBold
+    plus.TextSize = 14
+    plus.AutoButtonColor = false
+    plus.ZIndex = 4
+    plus.Parent = row
+    corner(plus, 8)
+    stroke(plus, THEME.Accent, 1, 0.5)
+
+    local value = math.clamp(tonumber(default) or min, min, max)
+    local callbacks = {}
+
+    local function format(v)
+        if decimals and decimals > 0 then
+            return string.format("%." .. decimals .. "f", v)
+        end
+        return tostring(math.floor(v + 0.5))
+    end
+
+    local function normalize(v)
+        v = math.clamp(tonumber(v) or value, min, max)
+        if decimals and decimals > 0 then
+            local m = 10 ^ decimals
+            v = math.floor(v * m + 0.5) / m
+        else
+            v = math.floor(v + 0.5)
+        end
+        return v
+    end
+
+    local function setInternal(v, fire)
+        value = normalize(v)
+        box.Text = format(value)
+        if fire ~= false then
+            for _, cb in ipairs(callbacks) do
+                task.spawn(cb, value)
+            end
+        end
+    end
+
+    setInternal(value, false)
+
+    local function bump(delta)
+        setInternal(value + delta, true)
+    end
+
+    minus.MouseButton1Click:Connect(function() bump(-step) end)
+    plus.MouseButton1Click:Connect(function() bump(step) end)
+
+    box.FocusLost:Connect(function()
+        setInternal(box.Text, true)
+    end)
+
+    local comp = {
+        id = id,
+        row = row,
+        get = function() return value end,
+        set = function(v) setInternal(v, true) end,
+        onChange = makeOnChange(callbacks),
+        destroy = function()
+            ConfigManager.unregister(id)
+            row:Destroy()
+        end,
+    }
+
+    ConfigManager.register(id, comp)
+    return comp
+end
+
+local function createMultiDropdownRow(card, order, label, values, defaults, opts)
+    opts = opts or {}
+    local id = opts.id or nextId("multidropdown")
+    values = table.clone(values or {})
+
+    local container = Instance.new("Frame")
+    container.LayoutOrder = order
+    container.Size = UDim2.new(1, 0, 0, 56)
+    container.BackgroundTransparency = 1
+    container.ZIndex = 2
+    container.Parent = card
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, 0, 0, 14)
+    title.Text = label
+    title.TextColor3 = THEME.TextMuted
+    title.Font = Enum.Font.Gotham
+    title.TextSize = 11
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 3
+    title.Parent = container
+
+    local button = Instance.new("TextButton")
+    button.Position = UDim2.fromOffset(0, 20)
+    button.Size = UDim2.new(1, 0, 0, 34)
+    button.BackgroundColor3 = THEME.PanelAlt
+    button.AutoButtonColor = false
+    button.Text = ""
+    button.ZIndex = 3
+    button.Parent = container
+    corner(button, 10)
+    stroke(button, THEME.Accent, 1, 0.4)
+
+    local selectedLabel = Instance.new("TextLabel")
+    selectedLabel.Position = UDim2.fromOffset(10, 0)
+    selectedLabel.Size = UDim2.new(1, -34, 1, 0)
+    selectedLabel.BackgroundTransparency = 1
+    selectedLabel.TextColor3 = THEME.TextPrimary
+    selectedLabel.Font = Enum.Font.Gotham
+    selectedLabel.TextSize = 13
+    selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    selectedLabel.ZIndex = 3
+    selectedLabel.Parent = button
+
+    local chevron = Instance.new("ImageLabel")
+    chevron.AnchorPoint = Vector2.new(1, 0.5)
+    chevron.Position = UDim2.new(1, -10, 0.5, 0)
+    chevron.Size = UDim2.fromOffset(12, 12)
+    chevron.ZIndex = 3
+    chevron.Parent = button
+    applyIcon(chevron, ICONS.ArrowRight, THEME.Accent)
+
+    local optionsFrame = Instance.new("Frame")
+    optionsFrame.Position = UDim2.new(0, 0, 0, 57)
+    optionsFrame.Size = UDim2.new(1, 0, 0, 0)
+    optionsFrame.BackgroundColor3 = THEME.PanelAlt
+    optionsFrame.BackgroundTransparency = 1
+    optionsFrame.Visible = false
+    optionsFrame.ClipsDescendants = true
+    optionsFrame.ZIndex = 100
+    optionsFrame.Parent = container
+    corner(optionsFrame, 10)
+    stroke(optionsFrame, THEME.Accent, 1, 0.4)
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingBottom = UDim.new(0, 4)
+    pad.Parent = optionsFrame
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = optionsFrame
+
+    local selected = {}
+    for _, value in ipairs(defaults or {}) do
+        selected[tostring(value)] = true
+    end
+
+    local callbacks = {}
+    local originalContainerZ = container.ZIndex
+    local originalCardZ = card.ZIndex
+
+    local function selectedList()
+        local out = {}
+        for _, value in ipairs(values) do
+            if selected[tostring(value)] then
+                table.insert(out, value)
+            end
+        end
+        return out
+    end
+
+    local function displayText()
+        local list = selectedList()
+        if #list == 0 then
+            return "None"
+        elseif #list <= 2 then
+            return table.concat(list, ", ")
+        else
+            return tostring(#list) .. " selected"
+        end
+    end
+
+    local function setLayer(open)
+        if open then
+            card.ZIndex = 200
+            container.ZIndex = 250
+            optionsFrame.ZIndex = 300
+        else
+            card.ZIndex = originalCardZ
+            container.ZIndex = originalContainerZ
+            optionsFrame.ZIndex = 100
+        end
+    end
+
+    local function closeThis()
+        setLayer(false)
+        TweenService:Create(chevron, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
+            Rotation = 0,
+            ImageColor3 = THEME.Accent,
+        }):Play()
+        TweenService:Create(optionsFrame, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(1, 0, 0, 0),
+            BackgroundTransparency = 1,
+        }):Play()
+        task.delay(0.18, function()
+            if optionsFrame.Parent then
+                optionsFrame.Visible = false
+            end
+        end)
+    end
+
+    local function openThis()
+        setLayer(true)
+        optionsFrame.Visible = true
+        local height = math.min(#values, 8) * 28 + 8
+        optionsFrame.Size = UDim2.new(1, 0, 0, 0)
+        TweenService:Create(chevron, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Rotation = 180,
+            ImageColor3 = THEME.AccentLight,
+        }):Play()
+        TweenService:Create(optionsFrame, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Size = UDim2.new(1, 0, 0, height),
+            BackgroundTransparency = 0,
+        }):Play()
+    end
+
+    local function notifyChange()
+        local snapshot = selectedList()
+        selectedLabel.Text = displayText()
+        for _, cb in ipairs(callbacks) do
+            task.spawn(cb, table.clone(snapshot))
+        end
+    end
+
+    local function rebuildOptions(newValues, newSelected)
+        values = table.clone(newValues or {})
+        selected = {}
+        for _, value in ipairs(newSelected or {}) do
+            selected[tostring(value)] = true
+        end
+
+        for _, child in ipairs(optionsFrame:GetChildren()) do
+            if child:IsA("TextButton") then
+                child:Destroy()
+            end
+        end
+
+        for i, value in ipairs(values) do
+            local key = tostring(value)
+            local item = Instance.new("TextButton")
+            item.LayoutOrder = i
+            item.Size = UDim2.new(1, 0, 0, 28)
+            item.BackgroundTransparency = 1
+            item.Text = ""
+            item.ZIndex = 301
+            item.Parent = optionsFrame
+
+            local text = Instance.new("TextLabel")
+            text.Position = UDim2.fromOffset(10, 0)
+            text.Size = UDim2.new(1, -36, 1, 0)
+            text.BackgroundTransparency = 1
+            text.Text = tostring(value)
+            text.TextColor3 = THEME.TextPrimary
+            text.Font = Enum.Font.Gotham
+            text.TextSize = 13
+            text.TextXAlignment = Enum.TextXAlignment.Left
+            text.ZIndex = 302
+            text.Parent = item
+
+            local check = Instance.new("TextLabel")
+            check.AnchorPoint = Vector2.new(1, 0.5)
+            check.Position = UDim2.new(1, -10, 0.5, 0)
+            check.Size = UDim2.fromOffset(16, 16)
+            check.BackgroundTransparency = 1
+            check.Text = selected[key] and "✓" or ""
+            check.TextColor3 = THEME.AccentLight
+            check.Font = Enum.Font.GothamBold
+            check.TextSize = 13
+            check.ZIndex = 302
+            check.Parent = item
+
+            item.MouseEnter:Connect(function()
+                TweenService:Create(item, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
+                    BackgroundTransparency = 0.85,
+                    BackgroundColor3 = THEME.Accent,
+                }):Play()
+            end)
+
+            item.MouseLeave:Connect(function()
+                TweenService:Create(item, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
+                    BackgroundTransparency = 1,
+                }):Play()
+            end)
+
+            item.MouseButton1Click:Connect(function()
+                selected[key] = not selected[key]
+                check.Text = selected[key] and "✓" or ""
+                notifyChange()
+            end)
+        end
+
+        selectedLabel.Text = displayText()
+    end
+
+    rebuildOptions(values, defaults or {})
+
+    button.MouseButton1Click:Connect(function()
+        local opening = not optionsFrame.Visible
+        closeAllDropdowns(opening and {optionsFrame = optionsFrame, close = closeThis} or nil)
+        if opening then openThis() else closeThis() end
+    end)
+
+    local entry = {optionsFrame = optionsFrame, close = closeThis}
+    table.insert(dropdownRegistry, entry)
+
+    local comp = {
+        id = id,
+        row = container,
+        get = function() return selectedList() end,
+        set = function(list)
+            if type(list) ~= "table" then return end
+            rebuildOptions(values, list)
+            notifyChange()
+        end,
+        setOptions = function(newValues, newSelected)
+            rebuildOptions(newValues, newSelected or selectedList())
+        end,
+        onChange = makeOnChange(callbacks),
+        destroy = function()
+            ConfigManager.unregister(id)
+            container:Destroy()
+        end,
+    }
+
+    ConfigManager.register(id, comp)
+    return comp
+end
+
 local function createButtonRow(card, order, label, color, onClick)
     local btn = Instance.new("TextButton")
     btn.LayoutOrder = order
@@ -3628,6 +4018,34 @@ function Library:_createSection(tab, name, side, options)
         return comp
     end
 
+    function section:CreateMultiDropdown(label, values, defaults, opts)
+        local comp = createMultiDropdownRow(
+            self._card,
+            self:_nextOrder(),
+            label,
+            values,
+            defaults,
+            opts
+        )
+        table.insert(self._components, comp)
+        return comp
+    end
+
+    function section:CreateNumberBox(label, min, max, default, decimals, opts)
+        local comp = createNumberBoxRow(
+            self._card,
+            self:_nextOrder(),
+            label,
+            min,
+            max,
+            default,
+            decimals,
+            opts
+        )
+        table.insert(self._components, comp)
+        return comp
+    end
+
     function section:CreateColorPicker(label, defaultColor, opts)
         local comp = createColorPickerRow(
             self._card,
@@ -3865,6 +4283,26 @@ function Library:_installTabMethods(tab)
             label,
             values,
             default,
+            opts
+        )
+    end
+
+    function tab:CreateMultiDropdown(label, values, defaults, opts)
+        return ensureDefaultSection(self):CreateMultiDropdown(
+            label,
+            values,
+            defaults,
+            opts
+        )
+    end
+
+    function tab:CreateNumberBox(label, min, max, default, decimals, opts)
+        return ensureDefaultSection(self):CreateNumberBox(
+            label,
+            min,
+            max,
+            default,
+            decimals,
             opts
         )
     end
@@ -5976,6 +6414,14 @@ end
 
 Library.CreateDropdown = function(section, label, values, default, options)
     return section:CreateDropdown(label, values, default, options)
+end
+
+Library.CreateMultiDropdown = function(section, label, values, defaults, options)
+    return section:CreateMultiDropdown(label, values, defaults, options)
+end
+
+Library.CreateNumberBox = function(section, label, min, max, default, decimals, options)
+    return section:CreateNumberBox(label, min, max, default, decimals, options)
 end
 
 Library.CreateColorPicker = function(section, label, defaultColor, options)
