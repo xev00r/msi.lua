@@ -299,6 +299,13 @@ end
 ----------------------------------------------------------------
 local notifyHost
 local watermark
+local watermarkEnabled = true
+local notificationsEnabled = true
+local animationsEnabled = true
+local uiScaleValue = 1
+local uiScaleController
+local menuKeybindComponent
+local keybindListToggleComponent
 
 local function notify(title, text, ntype, duration)
     ntype = ntype or "info"
@@ -319,7 +326,7 @@ local function notify(title, text, ntype, duration)
         error   = THEME.Error,
     })[ntype] or THEME.Accent
 
-    if not notifyHost then return end
+    if not notifyHost or not notificationsEnabled then return end
 
     local hasBody = text and text ~= ""
     local h = hasBody and 62 or 44
@@ -648,6 +655,10 @@ windowGradient.Color = ColorSequence.new({
 })
 windowGradient.Rotation = 90
 windowGradient.Parent = window
+
+uiScaleController = Instance.new("UIScale")
+uiScaleController.Scale = uiScaleValue
+uiScaleController.Parent = window
 
 window.BackgroundTransparency = 1
 -- Don't auto-fade in on create — Show()/Launch() handles the entrance tween
@@ -1552,7 +1563,10 @@ local function createDropdownRow(card, order, label, options, default, opts)
 
     local currentSelection = default
     local callbacks = {}
-    local openHeight = math.min(#options, 8) * 28 + 8
+    local currentOptions = table.clone(options)
+    local optionButtons = {}
+    local checkLabels = {}
+    local openHeight = math.min(#currentOptions, 8) * 28 + 8
 
     -- Keep an opened dropdown above every other row/card in the page.
     -- The card is temporarily lifted so its dropdown descendants render
@@ -1613,64 +1627,79 @@ local function createDropdownRow(card, order, label, options, default, opts)
         }):Play()
     end)
 
-    local checkLabels = {}
+    local function rebuildOptions(newOptions)
+        currentOptions = table.clone(newOptions or {})
+        optionButtons = {}
+        checkLabels = {}
 
-    for i, option in ipairs(options) do
-        local optBtn = Instance.new("TextButton")
-        optBtn.LayoutOrder           = i
-        optBtn.Size                  = UDim2.new(1, 0, 0, 28)
-        optBtn.BackgroundTransparency = 1
-        optBtn.Text                  = ""
-        optBtn.ZIndex                = 301
-        optBtn.Parent                = optionsFrame
-
-        local optText = Instance.new("TextLabel")
-        optText.Position        = UDim2.fromOffset(10, 0)
-        optText.Size            = UDim2.new(1, -20, 1, 0)
-        optText.BackgroundTransparency = 1
-        optText.Text            = option
-        optText.TextColor3      = THEME.TextPrimary
-        optText.Font            = Enum.Font.Gotham
-        optText.TextSize        = 13
-        optText.TextXAlignment  = Enum.TextXAlignment.Left
-        optText.ZIndex          = 302
-        optText.Parent          = optBtn
-
-        local check = Instance.new("TextLabel")
-        check.AnchorPoint   = Vector2.new(1, 0.5)
-        check.Position      = UDim2.new(1, -10, 0.5, 0)
-        check.Size          = UDim2.fromOffset(14, 14)
-        check.BackgroundTransparency = 1
-        check.Text          = option == default and "✓" or ""
-        check.TextColor3    = THEME.Accent
-        check.Font          = Enum.Font.GothamBold
-        check.TextSize      = 12
-        check.ZIndex        = 302
-        check.Parent        = optBtn
-        checkLabels[option] = check
-
-        optBtn.MouseEnter:Connect(function()
-            TweenService:Create(optBtn, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
-                BackgroundTransparency = 0.85,
-                BackgroundColor3 = THEME.Accent,
-            }):Play()
-        end)
-        optBtn.MouseLeave:Connect(function()
-            TweenService:Create(optBtn, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
-                BackgroundTransparency = 1,
-            }):Play()
-        end)
-        optBtn.MouseButton1Click:Connect(function()
-            for _, ck in pairs(checkLabels) do ck.Text = "" end
-            check.Text = "✓"
-            selectedLabel.Text = option
-            currentSelection = option
-            closeThis()
-            for _, cb in ipairs(callbacks) do
-                task.spawn(cb, option)
+        for _, child in ipairs(optionsFrame:GetChildren()) do
+            if child:IsA("TextButton") then
+                child:Destroy()
             end
-        end)
+        end
+
+        openHeight = math.min(#currentOptions, 8) * 28 + 8
+
+        for i, option in ipairs(currentOptions) do
+            local optBtn = Instance.new("TextButton")
+            optBtn.LayoutOrder           = i
+            optBtn.Size                  = UDim2.new(1, 0, 0, 28)
+            optBtn.BackgroundTransparency = 1
+            optBtn.Text                  = ""
+            optBtn.ZIndex                = 301
+            optBtn.Parent                = optionsFrame
+            optionButtons[option] = optBtn
+
+            local optText = Instance.new("TextLabel")
+            optText.Position        = UDim2.fromOffset(10, 0)
+            optText.Size            = UDim2.new(1, -20, 1, 0)
+            optText.BackgroundTransparency = 1
+            optText.Text            = option
+            optText.TextColor3      = THEME.TextPrimary
+            optText.Font            = Enum.Font.Gotham
+            optText.TextSize        = 13
+            optText.TextXAlignment  = Enum.TextXAlignment.Left
+            optText.ZIndex          = 302
+            optText.Parent          = optBtn
+
+            local check = Instance.new("TextLabel")
+            check.AnchorPoint   = Vector2.new(1, 0.5)
+            check.Position      = UDim2.new(1, -10, 0.5, 0)
+            check.Size          = UDim2.fromOffset(14, 14)
+            check.BackgroundTransparency = 1
+            check.Text          = option == currentSelection and "✓" or ""
+            check.TextColor3    = THEME.Accent
+            check.Font          = Enum.Font.GothamBold
+            check.TextSize      = 12
+            check.ZIndex        = 302
+            check.Parent        = optBtn
+            checkLabels[option] = check
+
+            optBtn.MouseEnter:Connect(function()
+                TweenService:Create(optBtn, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
+                    BackgroundTransparency = 0.85,
+                    BackgroundColor3 = THEME.Accent,
+                }):Play()
+            end)
+            optBtn.MouseLeave:Connect(function()
+                TweenService:Create(optBtn, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
+                    BackgroundTransparency = 1,
+                }):Play()
+            end)
+            optBtn.MouseButton1Click:Connect(function()
+                for _, ck in pairs(checkLabels) do ck.Text = "" end
+                check.Text = "✓"
+                selectedLabel.Text = option
+                currentSelection = option
+                closeThis()
+                for _, cb in ipairs(callbacks) do
+                    task.spawn(cb, option)
+                end
+            end)
+        end
     end
+
+    rebuildOptions(currentOptions)
 
     button.MouseButton1Click:Connect(function()
         local willOpen = not optionsFrame.Visible
@@ -1686,13 +1715,31 @@ local function createDropdownRow(card, order, label, options, default, opts)
         row = container,
         get = function() return currentSelection end,
         set = function(v)
-            if not table.find(options, v) then return end
+            if not table.find(currentOptions, v) then return end
             for _, ck in pairs(checkLabels) do ck.Text = "" end
             if checkLabels[v] then checkLabels[v].Text = "✓" end
             selectedLabel.Text = v
             currentSelection = v
             for _, cb in ipairs(callbacks) do
                 task.spawn(cb, v)
+            end
+        end,
+        setOptions = function(newOptions, preferred)
+            rebuildOptions(newOptions)
+            local desired = preferred or currentSelection
+            if not table.find(currentOptions, desired) then
+                desired = currentOptions[1]
+            end
+            if desired ~= nil then
+                selectedLabel.Text = desired
+                currentSelection = desired
+                for _, ck in pairs(checkLabels) do ck.Text = "" end
+                if checkLabels[desired] then
+                    checkLabels[desired].Text = "✓"
+                end
+            else
+                selectedLabel.Text = "None"
+                currentSelection = nil
             end
         end,
         onChange = function(cb) table.insert(callbacks, cb) end,
@@ -3222,6 +3269,14 @@ local function activateRail(index, targetSection)
     local page = tab.page
     if page then
         page.CanvasPosition = Vector2.new(0, 0)
+        if animationsEnabled then
+            page.BackgroundTransparency = 1
+            TweenService:Create(page, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                BackgroundTransparency = 0,
+            }):Play()
+        else
+            page.BackgroundTransparency = 1
+        end
     end
 end
 
@@ -3392,15 +3447,38 @@ function Library:SetKeybindListVisible(value)
     if setKeybindListVisible then
         setKeybindListVisible(value)
     end
+
+    if keybindListToggleComponent
+        and keybindListToggleComponent.get
+        and keybindListToggleComponent.get() ~= (value == true)
+        and keybindListToggleComponent.set then
+        keybindListToggleComponent.set(value == true)
+    end
 end
 
 function Library:SetMenuKeybind(key)
+    if key == nil then
+        return toggleKey
+    end
+
     toggleKey = key
+
+    if menuKeybindComponent and menuKeybindComponent.set then
+        menuKeybindComponent.set(key)
+    end
+
     return toggleKey
 end
 
 function Library:GetMenuKeybind()
     return toggleKey
+end
+
+function Library:OpenSettings()
+    local settings = self:_ensureSettingsTab()
+    self:_pinSettingsTab()
+    self:SelectTab(settings)
+    return settings
 end
 
 function Library:Notify(title, text, ntype, duration)
@@ -3906,12 +3984,27 @@ do
     local rawCreateTab = Library.CreateTab
 
     function Library:CreateTab(name, icon)
+        if name == "Settings" and self._settingsTab and not self._buildingSettings then
+            return self._settingsTab
+        end
+
+        local settingsWasActive = (
+            not self._buildingSettings
+            and self._settingsTab
+            and tabs[activeRailIndex] == self._settingsTab
+        )
+
         local tab = rawCreateTab(self, name, icon)
         self:_installTabMethods(tab)
 
         if not self._buildingSettings and name ~= "Settings" then
             task.defer(function()
-                self:_relocateSettingsTab()
+                self:_ensureSettingsTab()
+                self:_pinSettingsTab()
+
+                if settingsWasActive then
+                    activateRail(tab.index, tab.sections[1])
+                end
             end)
         end
 
@@ -4021,36 +4114,47 @@ toggleMenu = function()
     if menuOpen then
         window.Visible = true
         if watermark then
-            watermark.Visible = true
+            watermark.Visible = watermarkEnabled
         end
 
-        TweenService:Create(
-            window,
-            TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-            {
-                Size = UDim2.fromOffset(960, 600),
-                BackgroundTransparency = 0,
-            }
-        ):Play()
+        if animationsEnabled then
+            TweenService:Create(
+                window,
+                TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                {
+                    Size = UDim2.fromOffset(960, 600),
+                    BackgroundTransparency = 0,
+                }
+            ):Play()
+        else
+            window.Size = UDim2.fromOffset(960, 600)
+            window.BackgroundTransparency = 0
+        end
     else
         if watermark then
             watermark.Visible = false
         end
 
-        TweenService:Create(
-            window,
-            TweenInfo.new(0.25, Enum.EasingStyle.Quad),
-            {
-                Size = UDim2.fromOffset(960, 0),
-                BackgroundTransparency = 1,
-            }
-        ):Play()
+        if animationsEnabled then
+            TweenService:Create(
+                window,
+                TweenInfo.new(0.25, Enum.EasingStyle.Quad),
+                {
+                    Size = UDim2.fromOffset(960, 0),
+                    BackgroundTransparency = 1,
+                }
+            ):Play()
 
-        task.delay(0.25, function()
-            if not menuOpen then
-                window.Visible = false
-            end
-        end)
+            task.delay(0.25, function()
+                if not menuOpen then
+                    window.Visible = false
+                end
+            end)
+        else
+            window.Visible = false
+            window.Size = UDim2.fromOffset(960, 0)
+            window.BackgroundTransparency = 1
+        end
     end
 end
 
@@ -5417,69 +5521,254 @@ end
 
 
 ----------------------------------------------------------------
--- BUILT-IN SETTINGS TAB
+-- BUILT-IN SETTINGS TAB (PERMANENT)
 ----------------------------------------------------------------
 function Library:_populateSettingsTab(tab)
-    local general = tab:CreateSection("Menu", "left")
+    if tab._settingsBuilt then
+        return
+    end
 
-    general:CreateMenuKeybind("Menu keybind", toggleKey, {id = "_settings_menu_key"})
+    tab._settingsBuilt = true
 
-    general:CreateKeybindListToggle("Show keybind list", keybindListEnabled, {id = "_settings_kb_list"})
+    local general = tab:CreateSection("Menu", "left", {
+        description = "Wszystkie ustawienia głównego menu MSI.LUA.",
+    })
 
-    local autoToggle = general:CreateToggle("Auto save config", ConfigManager.autoSave, {id = "_settings_autosave"})
-    autoToggle:onChange(function(v) ConfigManager.autoSave = v end)
+    menuKeybindComponent = general:CreateMenuKeybind(
+        "Menu keybind",
+        toggleKey,
+        {id = "_settings_menu_key"}
+    )
 
-    local autoSlider = general:CreateSlider("Auto save interval (s)", 10, 300, ConfigManager.autoSaveInterval, 0, {id = "_settings_autosave_interval"})
-    autoSlider:onChange(function(v) ConfigManager.autoSaveInterval = v end)
+    keybindListToggleComponent = general:CreateKeybindListToggle(
+        "Show keybind list",
+        keybindListEnabled,
+        {id = "_settings_kb_list"}
+    )
 
-    local configs = tab:CreateSection("Configs", "right")
+    local watermarkToggle = general:CreateToggle(
+        "Show watermark",
+        watermarkEnabled,
+        {id = "_settings_watermark"}
+    )
+    watermarkToggle:onChange(function(v)
+        watermarkEnabled = v == true
+        if watermark then
+            watermark.Visible = watermarkEnabled and menuOpen
+        end
+    end)
+
+    local notifyToggle = general:CreateToggle(
+        "Show notifications",
+        notificationsEnabled,
+        {id = "_settings_notifications"}
+    )
+    notifyToggle:onChange(function(v)
+        notificationsEnabled = v
+    end)
+
+    local animationToggle = general:CreateToggle(
+        "Menu animations",
+        animationsEnabled,
+        {id = "_settings_animations"}
+    )
+    animationToggle:onChange(function(v)
+        animationsEnabled = v
+    end)
+
+    local scaleSlider = general:CreateSlider(
+        "UI scale",
+        0.75,
+        1.25,
+        uiScaleValue,
+        2,
+        {id = "_settings_ui_scale"}
+    )
+    scaleSlider:onChange(function(v)
+        uiScaleValue = v
+        if uiScaleController then
+            uiScaleController.Scale = v
+        end
+    end)
+
+    local autoToggle = general:CreateToggle(
+        "Auto save config",
+        ConfigManager.autoSave,
+        {id = "_settings_autosave"}
+    )
+    autoToggle:onChange(function(v)
+        ConfigManager.autoSave = v
+    end)
+
+    local autoSlider = general:CreateSlider(
+        "Auto save interval (s)",
+        10,
+        300,
+        ConfigManager.autoSaveInterval,
+        0,
+        {id = "_settings_autosave_interval"}
+    )
+    autoSlider:onChange(function(v)
+        ConfigManager.autoSaveInterval = v
+    end)
+
+    local configs = tab:CreateSection("Configs", "right", {
+        description = "Zapisuj, wczytuj i usuwaj profile menu.",
+    })
 
     local function refreshList()
         local list = FileAPI.list()
-        if #list == 0 then list = {ConfigManager.current} end
+        if #list == 0 then
+            list = {ConfigManager.current}
+        end
         return list
     end
 
-    local nameBox = configs:CreateTextBox("Config name", "my_config", ConfigManager.current, {id = "_settings_config_name"})
-    local listDropdown = configs:CreateDropdown("Saved configs", refreshList(), ConfigManager.current, {id = "_settings_config_list"})
+    local nameBox = configs:CreateTextBox(
+        "Config name",
+        "my_config",
+        ConfigManager.current,
+        {id = "_settings_config_name"}
+    )
+
+    local listDropdown = configs:CreateDropdown(
+        "Saved configs",
+        refreshList(),
+        ConfigManager.current,
+        {id = "_settings_config_list"}
+    )
 
     listDropdown:onChange(function(v)
-        nameBox.set(v)
+        if v then
+            nameBox.set(v)
+        end
     end)
 
+    local function refreshConfigDropdown()
+        local list = refreshList()
+        listDropdown.setOptions(list, ConfigManager.current)
+    end
+
     configs:CreateButton("Save", THEME.Accent, function()
-        local name = nameBox.get()
-        if name == "" then return end
-        ConfigManager.save(name)
-        task.defer(function() self:_relocateSettingsTab() end)
+        local name = tostring(nameBox.get() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if name == "" then
+            notify("Config", "Enter a config name first.", "warning")
+            return
+        end
+
+        if ConfigManager.save(name) then
+            refreshConfigDropdown()
+            nameBox.set(name)
+        end
     end)
 
     configs:CreateButton("Load", THEME.PanelAlt, function()
-        local name = nameBox.get()
-        if name == "" then return end
-        ConfigManager.load(name)
+        local name = tostring(nameBox.get() or "")
+        if name == "" then
+            return
+        end
+
+        if ConfigManager.load(name) then
+            refreshConfigDropdown()
+        end
     end)
 
     configs:CreateButton("Delete", THEME.Error, function()
-        local name = nameBox.get()
-        if name == "" then return end
-        ConfigManager.delete(name)
-        task.defer(function() self:_relocateSettingsTab() end)
+        local name = tostring(nameBox.get() or "")
+        if name == "" then
+            return
+        end
+
+        if ConfigManager.delete(name) then
+            ConfigManager.current = "default"
+            refreshConfigDropdown()
+            nameBox.set(ConfigManager.current)
+        end
     end)
+
+    local about = tab:CreateSection("About", "right", {
+        description = "Informacje o bibliotece i szybkie akcje.",
+    })
+
+    about:CreateStatic("Version", "1.0.0", true)
+    about:CreateStatic("Profile", ConfigManager.current, true)
+    about:CreateButton("Save current", THEME.AccentDim, function()
+        ConfigManager.save(ConfigManager.current)
+        refreshConfigDropdown()
+    end)
+
+    tab._settingsRefreshConfigDropdown = refreshConfigDropdown
+end
+
+function Library:_ensureSettingsTab()
+    if self._settingsTab and self._settingsTab.page and self._settingsTab.page.Parent then
+        return self._settingsTab
+    end
+
+    self._buildingSettings = true
+    local tab = Library.CreateTab(self, "Settings", ICONS.Settings)
+    self._buildingSettings = false
+    self:_installTabMethods(tab)
+    self._settingsTab = tab
+    self:_populateSettingsTab(tab)
+    return tab
+end
+
+function Library:_pinSettingsTab()
+    local settings = self._settingsTab
+    if not settings or #tabs < 2 then
+        return
+    end
+
+    local currentActiveTab = tabs[activeRailIndex]
+    local settingsIndex
+
+    for i, item in ipairs(tabs) do
+        if item == settings then
+            settingsIndex = i
+            break
+        end
+    end
+
+    if not settingsIndex or settingsIndex == #tabs then
+        return
+    end
+
+    table.remove(tabs, settingsIndex)
+    table.insert(tabs, settings)
+
+    -- Re-map pages to follow the tab order.
+    local orderedPages = {}
+    for i, item in ipairs(tabs) do
+        orderedPages[i] = item.page
+        item.index = i
+    end
+    railPages = orderedPages
+
+    -- Rebuild only the rail buttons so their click handlers use the new indices.
+    for _, button in ipairs(railButtons) do
+        if button and button.Parent then
+            button:Destroy()
+        end
+    end
+    railButtons = {}
+
+    for _, item in ipairs(tabs) do
+        buildRailButton(item)
+    end
+    refreshRailButtonPositions()
+
+    if currentActiveTab then
+        local newIndex = currentActiveTab.index
+        if tabs[newIndex] then
+            activateRail(newIndex, currentActiveTab._selectedSection)
+        end
+    end
 end
 
 function Library:_relocateSettingsTab()
-    if self._buildingSettings then return end
-    if self._settingsTab then
-        local old = self._settingsTab
-        self._settingsTab = nil
-        old:Destroy()
-    end
-    self._buildingSettings = true
-    local tab = self:CreateTab("Settings", ICONS.Settings)
-    self._buildingSettings = false
-    self._settingsTab = tab
-    self:_populateSettingsTab(tab)
+    self:_ensureSettingsTab()
+    self:_pinSettingsTab()
 end
 
 
@@ -5497,20 +5786,26 @@ function Library:Show()
     window.Position = UDim2.fromScale(0.5, 0.52)
 
     if watermark then
-        watermark.Visible = true
+        watermark.Visible = watermarkEnabled
     end
 
-    local openInfo = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-    local fadeInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    if animationsEnabled then
+        local openInfo = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        local fadeInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-    TweenService:Create(window, openInfo, {
-        Size = UDim2.fromOffset(960, 600),
-        Position = UDim2.fromScale(0.5, 0.5),
-    }):Play()
+        TweenService:Create(window, openInfo, {
+            Size = UDim2.fromOffset(960, 600),
+            Position = UDim2.fromScale(0.5, 0.5),
+        }):Play()
 
-    TweenService:Create(window, fadeInfo, {
-        BackgroundTransparency = 0,
-    }):Play()
+        TweenService:Create(window, fadeInfo, {
+            BackgroundTransparency = 0,
+        }):Play()
+    else
+        window.Size = UDim2.fromOffset(960, 600)
+        window.Position = UDim2.fromScale(0.5, 0.5)
+        window.BackgroundTransparency = 0
+    end
 
     return self
 end
@@ -5523,20 +5818,26 @@ function Library:Hide()
         watermark.Visible = false
     end
 
-    TweenService:Create(
-        window,
-        TweenInfo.new(0.25, Enum.EasingStyle.Quad),
-        {
-            Size = UDim2.fromOffset(960, 0),
-            BackgroundTransparency = 1,
-        }
-    ):Play()
+    if animationsEnabled then
+        TweenService:Create(
+            window,
+            TweenInfo.new(0.25, Enum.EasingStyle.Quad),
+            {
+                Size = UDim2.fromOffset(960, 0),
+                BackgroundTransparency = 1,
+            }
+        ):Play()
 
-    task.delay(0.25, function()
-        if not menuOpen and window.Parent then
-            window.Visible = false
-        end
-    end)
+        task.delay(0.25, function()
+            if not menuOpen and window.Parent then
+                window.Visible = false
+            end
+        end)
+    else
+        window.Visible = false
+        window.Size = UDim2.fromOffset(960, 0)
+        window.BackgroundTransparency = 1
+    end
 
     return self
 end
@@ -5693,6 +5994,11 @@ end
 ----------------------------------------------------------------
 -- INITIAL LOAD
 ----------------------------------------------------------------
+-- Build the Settings tab once. It remains pinned to the end of the rail
+-- and is never rebuilt just because another tab is created or a config changes.
+Library:_ensureSettingsTab()
+Library:_pinSettingsTab()
+
 if FileAPI.available then
     notify(
         "MSI Library",
@@ -5719,12 +6025,11 @@ Library.GetKeybindList = function()
 end
 
 Library.SetMenuKeybind = function(key)
-    toggleKey = key
-    return toggleKey
+    return Library:SetMenuKeybind(key)
 end
 
 Library.GetMenuKeybind = function()
-    return toggleKey
+    return Library:GetMenuKeybind()
 end
 
 Library.IsKeybindListVisible = function()
