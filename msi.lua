@@ -5906,8 +5906,10 @@ end
 ----------------------------------------------------------------
 function Library:CreateLoadingScreen(options)
     options = options or {}
-    -- Dragon from main UI (content / watermark)
-    local dragonId = options.Image or options.BackgroundImage or "rbxassetid://122286881817734"
+
+    -- Original MSI loading dragon.
+    local dragonId = options.Image or "rbxassetid://122286881817734"
+
     local holdTime = tonumber(options.HoldTime) or 1.35
     local fadeInTime = tonumber(options.FadeInTime) or 1.0
     local fadeOutTime = tonumber(options.FadeOutTime) or 0.85
@@ -5917,8 +5919,10 @@ function Library:CreateLoadingScreen(options)
     screen.ResetOnSpawn = false
     screen.IgnoreGuiInset = true
     screen.DisplayOrder = 1000
+    screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screen.Parent = playerGui
 
+    -- Pure black background. No spinner, percent, watermark or extra UI.
     local background = Instance.new("Frame")
     background.Name = "Background"
     background.Size = UDim2.fromScale(1, 1)
@@ -5926,102 +5930,66 @@ function Library:CreateLoadingScreen(options)
     background.BorderSizePixel = 0
     background.Parent = screen
 
-    local glow = Instance.new("Frame")
-    glow.Name = "Glow"
-    glow.Size = UDim2.fromScale(1, 1)
-    glow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    glow.BackgroundTransparency = 1
-    glow.BorderSizePixel = 0
-    glow.Parent = background
-
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(0, 0, 0)),
-        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(55, 0, 95)),
-    })
-    gradient.Rotation = 90
-    gradient.Parent = glow
-
-    local pulseRunning = true
-    task.spawn(function()
-        local t = 0
-        while pulseRunning and background.Parent do
-            t = t + RunService.RenderStepped:Wait()
-            local pulse = 0.55 + math.sin(t * 0.7) * 0.18
-            gradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0.0, Color3.fromRGB(0, 0, 0)),
-                ColorSequenceKeypoint.new(0.55, Color3.fromRGB(0, 0, 0)),
-                ColorSequenceKeypoint.new(1.0, Color3.fromRGB(55 * pulse, 0, 95 * pulse)),
-            })
-        end
-    end)
-
-    local titleContainer = Instance.new("Frame")
-    titleContainer.Name = "TitleContainer"
-    titleContainer.AnchorPoint = Vector2.new(0.5, 0.5)
-    titleContainer.Position = UDim2.fromScale(0.5, 0.5)
-    titleContainer.Size = UDim2.fromScale(0.72, 0.55)
-    titleContainer.BackgroundTransparency = 1
-    titleContainer.Parent = background
-
     local titleImage = Instance.new("ImageLabel")
-    titleImage.Name = "TitleImage"
+    titleImage.Name = "Dragon"
     titleImage.AnchorPoint = Vector2.new(0.5, 0.5)
     titleImage.Position = UDim2.fromScale(0.5, 0.5)
-    titleImage.Size = UDim2.fromScale(0.88, 0.88)
+    titleImage.Size = UDim2.fromScale(0.72, 0.48)
     titleImage.BackgroundTransparency = 1
     titleImage.Image = dragonId
     titleImage.ImageTransparency = 1
     titleImage.ScaleType = Enum.ScaleType.Fit
-    titleImage.Parent = titleContainer
+    titleImage.ZIndex = 2
+    titleImage.Parent = background
+
+    -- Start slightly smaller so the dragon gently settles into place.
+    titleImage.Size = UDim2.fromScale(0.66, 0.44)
 
     task.spawn(function()
         task.wait(0.2)
 
-        -- Purple glow rises, then dragon scales + fades in
-        TweenService:Create(
-            glow,
-            TweenInfo.new(fadeInTime * 0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-            {BackgroundTransparency = 0}
-        ):Play()
-
-        TweenService:Create(
+        -- Fade in + tiny scale settle.
+        local fadeIn = TweenService:Create(
             titleImage,
-            TweenInfo.new(fadeInTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(
+                fadeInTime,
+                Enum.EasingStyle.Sine,
+                Enum.EasingDirection.Out
+            ),
             {
                 ImageTransparency = 0,
-                Size = UDim2.fromScale(1, 1),
+                Size = UDim2.fromScale(0.72, 0.48),
             }
-        ):Play()
+        )
 
-        task.wait(fadeInTime + holdTime)
+        fadeIn:Play()
+        fadeIn.Completed:Wait()
 
-        pulseRunning = false
+        task.wait(holdTime)
 
-        -- Fade out dragon + glow, keep pure black so KeySystem handoff has no flash
-        TweenService:Create(
+        -- Fade out + gentle scale away.
+        local fadeOut = TweenService:Create(
             titleImage,
-            TweenInfo.new(fadeOutTime, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
+            TweenInfo.new(
+                fadeOutTime,
+                Enum.EasingStyle.Sine,
+                Enum.EasingDirection.In
+            ),
             {
                 ImageTransparency = 1,
-                Size = UDim2.fromScale(1.06, 1.06),
+                Size = UDim2.fromScale(0.76, 0.51),
             }
-        ):Play()
+        )
 
-        TweenService:Create(
-            glow,
-            TweenInfo.new(fadeOutTime, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
-            {BackgroundTransparency = 1}
-        ):Play()
-
-        task.wait(fadeOutTime)
+        fadeOut:Play()
+        fadeOut.Completed:Wait()
 
         if type(options.OnComplete) == "function" then
             safeSpawn(options.OnComplete)
         end
 
-        task.wait(0.12)
+        task.wait(0.08)
+
         if screen.Parent then
             screen:Destroy()
         end
@@ -6029,7 +5997,6 @@ function Library:CreateLoadingScreen(options)
 
     return screen
 end
-
 
 ----------------------------------------------------------------
 -- BUILT-IN SETTINGS TAB
