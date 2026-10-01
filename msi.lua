@@ -694,7 +694,7 @@ windowGradient.Parent = window
 
 uiScaleController = Instance.new("UIScale")
 uiScaleController.Scale = uiScaleValue
-uiScaleController.Parent = window
+uiScaleController.Parent = (uiScaleValue ~= 1) and window or nil
 
 window.BackgroundTransparency = 1
 -- Don't auto-fade in on create — Show()/Launch() handles the entrance tween
@@ -2191,24 +2191,20 @@ local function createButtonRow(card, order, label, color, onClick)
     btn.MouseEnter:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
             BackgroundTransparency = 0.15,
-            Size = UDim2.new(1, 0, 0, 34),
         }):Play()
     end)
     btn.MouseLeave:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
             BackgroundTransparency = 0,
-            Size = UDim2.new(1, 0, 0, 32),
         }):Play()
     end)
     btn.MouseButton1Down:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.08, Enum.EasingStyle.Quad), {
-            Size = UDim2.new(1, 0, 0, 30),
-            BackgroundTransparency = 0.3,
+            BackgroundTransparency = 0.35,
         }):Play()
     end)
     btn.MouseButton1Up:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
-            Size = UDim2.new(1, 0, 0, 34),
+        TweenService:Create(btn, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
             BackgroundTransparency = 0.15,
         }):Play()
     end)
@@ -2220,7 +2216,8 @@ local function createButtonRow(card, order, label, color, onClick)
 end
 
 local keybindRegistry = {}
-local keybindListEnabled = false
+local keybindListEnabled = false   -- off by default; only a config / the toggle turns it on
+local keybindUiReady = false       -- true only after the menu has actually been shown (after key system)
 local setKeybindListVisible
 local keybindListening = false
 local toggleKey = Enum.KeyCode.Insert
@@ -4546,6 +4543,7 @@ toggleMenu = function()
     hideTooltip()
 
     if menuOpen then
+        keybindUiReady = true
         window.Visible = true
         if watermark then
             watermark.Visible = watermarkEnabled
@@ -4847,7 +4845,7 @@ local function rebuildKeybindList(force)
 
     local entries = collectKeybindEntries()
 
-    if not keybindListEnabled or #entries == 0 then
+    if not keybindListEnabled or not keybindUiReady or #entries == 0 then
         keybindListHost.Visible = false
         lastKeybindSignature = nil
         return
@@ -6073,6 +6071,7 @@ function Library:_populateSettingsTab(tab)
         uiScaleValue = v
         if uiScaleController then
             uiScaleController.Scale = v
+            uiScaleController.Parent = (v ~= 1) and window or nil
         end
     end)
 
@@ -6262,6 +6261,7 @@ end
 ----------------------------------------------------------------
 function Library:Show()
     menuOpen = true
+    keybindUiReady = true
     hideTooltip()
 
     -- Start slightly smaller / transparent for a premium entrance
@@ -6332,6 +6332,8 @@ function Library:Launch(options)
 
     -- Force closed state before boot sequence
     menuOpen = false
+    keybindUiReady = false
+    if keybindListHost then keybindListHost.Visible = false end
     window.Visible = false
     window.Size = UDim2.fromOffset(920, 560)
     window.BackgroundTransparency = 1
