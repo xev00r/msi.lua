@@ -5906,7 +5906,8 @@ end
 ----------------------------------------------------------------
 function Library:CreateLoadingScreen(options)
     options = options or {}
-    -- Dragon from main UI (content / watermark)
+
+    -- Dragon from gg.txt / main UI
     local dragonId = options.Image or options.BackgroundImage or "rbxassetid://78464903954782"
     local holdTime = tonumber(options.HoldTime) or 1.35
     local fadeInTime = tonumber(options.FadeInTime) or 1.0
@@ -5999,7 +6000,7 @@ function Library:CreateLoadingScreen(options)
 
         pulseRunning = false
 
-        -- Fade out dragon + glow, keep pure black so KeySystem handoff has no flash
+        -- Fade out dragon + glow, keep pure black for KeySystem handoff
         TweenService:Create(
             titleImage,
             TweenInfo.new(fadeOutTime, Enum.EasingStyle.Sine, Enum.EasingDirection.In),
@@ -6236,7 +6237,7 @@ function Library:Launch(options)
         loadingOptions = table.clone(loadingOptions)
         -- Dragon from main UI unless user overrides Image
         if not loadingOptions.Image and not loadingOptions.BackgroundImage then
-            loadingOptions.Image = "rbxassetid://122286881817734"
+            loadingOptions.Image = "rbxassetid://78464903954782"
         end
         loadingOptions.OnComplete = startKeySystem
         self:CreateLoadingScreen(loadingOptions)
