@@ -107,6 +107,42 @@ local function toHex(c)
         math.floor(c.R*255+0.5), math.floor(c.G*255+0.5), math.floor(c.B*255+0.5))
 end
 
+
+-- Connects InputChanged/InputEnded ONLY while a drag is active.
+-- (Global always-on InputChanged handlers per component were the main cursor stutter.)
+local function trackDrag(onMove, onEnd)
+    local moveConn, endConn
+    local function stop()
+        if moveConn then moveConn:Disconnect() moveConn = nil end
+        if endConn then endConn:Disconnect() endConn = nil end
+    end
+    moveConn = UserInputService.InputChanged:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseMovement
+            or inp.UserInputType == Enum.UserInputType.Touch then
+            onMove(inp)
+        end
+    end)
+    endConn = UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+            or inp.UserInputType == Enum.UserInputType.Touch then
+            stop()
+            if onEnd then onEnd(inp) end
+        end
+    end)
+    return stop
+end
+
+-- Works for both comp.onChange(fn) and comp:onChange(fn)
+local function makeOnChange(callbacks)
+    return function(a, b)
+        local cb = (type(a) == "function") and a or b
+        if type(cb) == "function" then
+            table.insert(callbacks, cb)
+        end
+        return type(a) == "table" and a or nil
+    end
+end
+
 -- Live clock (DateTime → os.date → tick fallback) so time/date always tick
 local function clockParts()
     -- Prefer DateTime:ToLocalTime() numeric fields (FormatLocalTime is locale-flaky)
@@ -1054,8 +1090,9 @@ bgImage.AnchorPoint = Vector2.new(0.5, 0.5)
 bgImage.BackgroundTransparency = 1
 bgImage.Image = "rbxassetid://78464903954782"
 bgImage.ScaleType = Enum.ScaleType.Crop
-bgImage.ImageTransparency = 0.05
-bgImage.ZIndex = 1
+bgImage.ImageTransparency = 0
+bgImage.ZIndex = 2
+bgImage.Visible = true
 bgImage.Parent = contentHost
 
 local railPages = {}
@@ -1287,7 +1324,7 @@ local function createToggleRow(card, order, label, default, options)
         row = row,
         get = function() return state end,
         set = function(v) setInternal(v) end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
+        onChange = makeOnChange(callbacks),
         destroy = function()
             ConfigManager.unregister(id)
             row:Destroy()
@@ -1395,42 +1432,38 @@ local function createSliderRow(card, order, label, min, max, default, decimals, 
     setInternal(default, false)
 
     local dragging = false
-    knob.InputBegan:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1
-        or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
-                Size = UDim2.fromOffset(16, 16),
+    local function valueFromX(x)
+        local a = (x - trackBg.AbsolutePosition.X) / math.max(trackBg.AbsoluteSize.X, 1)
+        return min + (max - min) * a
+    end
+
+    local function startDrag(x)
+        if dragging then return end
+        dragging = true
+        if x then setInternal(valueFromX(x), true) end
+        TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
+            Size = UDim2.fromOffset(16, 16),
+        }):Play()
+        trackDrag(function(inp)
+            setInternal(valueFromX(inp.Position.X), false)
+        end, function()
+            dragging = false
+            TweenService:Create(knob, TweenInfo.new(0.15, Enum.EasingStyle.Back), {
+                Size = UDim2.fromOffset(12, 12),
             }):Play()
-        end
-    end)
+        end)
+    end
+
     trackBg.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
-            local a = (inp.Position.X - trackBg.AbsolutePosition.X) / math.max(trackBg.AbsoluteSize.X, 1)
-            setInternal(min + (max - min) * a, true)
-            dragging = true
-            TweenService:Create(knob, TweenInfo.new(0.1, Enum.EasingStyle.Back), {
-                Size = UDim2.fromOffset(16, 16),
-            }):Play()
+            startDrag(inp.Position.X)
         end
     end)
-    UserInputService.InputChanged:Connect(function(inp)
-        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
-            or inp.UserInputType == Enum.UserInputType.Touch) then
-            local a = (inp.Position.X - trackBg.AbsolutePosition.X) / math.max(trackBg.AbsoluteSize.X, 1)
-            setInternal(min + (max - min) * a, false)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(inp)
+    knob.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
-            if dragging then
-                TweenService:Create(knob, TweenInfo.new(0.15, Enum.EasingStyle.Back), {
-                    Size = UDim2.fromOffset(12, 12),
-                }):Play()
-            end
-            dragging = false
+            startDrag(nil)
         end
     end)
 
@@ -1454,7 +1487,7 @@ local function createSliderRow(card, order, label, min, max, default, decimals, 
         row = container,
         get = function() return currentValue end,
         set = function(v) setInternal(v) end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
+        onChange = makeOnChange(callbacks),
         destroy = function()
             ConfigManager.unregister(id)
             container:Destroy()
@@ -1740,7 +1773,7 @@ local function createDropdownRow(card, order, label, options, default, opts)
                 currentSelection = nil
             end
         end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
+        onChange = makeOnChange(callbacks),
         destroy = function()
             ConfigManager.unregister(id)
             container:Destroy()
@@ -1899,7 +1932,7 @@ local function createKeybindRow(card, order, label, defaultKey, options)
             end
             for _, cb in ipairs(callbacks) do task.spawn(cb, currentKey) end
         end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
+        onChange = makeOnChange(callbacks),
         destroy = function()
             ConfigManager.unregister(id)
             row:Destroy()
@@ -2052,7 +2085,7 @@ local function createTextBoxRow(card, order, labelText, placeholder, defaultText
             box.Text = currentText
             for _, cb in ipairs(callbacks) do task.spawn(cb, currentText) end
         end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
+        onChange = makeOnChange(callbacks),
         destroy = function() ConfigManager.unregister(id); row:Destroy() end,
     }
     ConfigManager.register(id, comp)
@@ -2237,7 +2270,7 @@ local function createComboRow(card, order, labelText, comboOptions, defaultValue
             keyButton.Text = keyName(currentKey)
             for _, cb in ipairs(callbacks) do task.spawn(cb, currentValue, currentKey) end
         end,
-        onChange = function(cb) table.insert(callbacks, cb) end,
+        onChange = makeOnChange(callbacks),
         destroy = function()
             ConfigManager.unregister(id)
             for i, e in ipairs(dropdownRegistry) do
@@ -2307,6 +2340,9 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     local popupOpen = false
     local wheelDragging = false
     local valDragging = false
+    local stopPickerDrag = nil
+    local outsideConn = nil
+    local connectOutside
 
     -- Popup (Dollarware-style wheel, MSI theme)
     local popup = Instance.new("Frame")
@@ -2532,9 +2568,25 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     wheelHit.Text = ""
     wheelHit.ZIndex = 502
     wheelHit.Parent = wheelFrame
+    local function startPickerDrag(kind)
+        if stopPickerDrag then stopPickerDrag() end
+        stopPickerDrag = trackDrag(function(inp)
+            if kind == "wheel" then
+                setFromWheel(inp.Position)
+            else
+                setFromValue(inp.Position)
+            end
+        end, function()
+            wheelDragging = false
+            valDragging = false
+            stopPickerDrag = nil
+        end)
+    end
+
     wheelHit.MouseButton1Down:Connect(function()
         wheelDragging = true
         setFromWheel(UserInputService:GetMouseLocation())
+        startPickerDrag("wheel")
     end)
 
     local valHit = Instance.new("TextButton")
@@ -2546,25 +2598,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
     valHit.MouseButton1Down:Connect(function()
         valDragging = true
         setFromValue(UserInputService:GetMouseLocation())
-    end)
-
-    UserInputService.InputChanged:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseMovement
-            or inp.UserInputType == Enum.UserInputType.Touch then
-            if wheelDragging then
-                setFromWheel(inp.Position)
-            elseif valDragging then
-                setFromValue(inp.Position)
-            end
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-            wheelDragging = false
-            valDragging = false
-        end
+        startPickerDrag("value")
     end)
 
     for _, c in ipairs(presets) do
@@ -2604,6 +2638,8 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         row.ZIndex = originalRowZ
         wheelDragging = false
         valDragging = false
+        if stopPickerDrag then stopPickerDrag() stopPickerDrag = nil end
+        if outsideConn then outsideConn:Disconnect() outsideConn = nil end
     end
 
     local function openPopup()
@@ -2615,6 +2651,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         card.ZIndex = 200
         row.ZIndex = 250
         applyVisuals(false)
+        connectOutside()
     end
 
     local entry = {
@@ -2633,25 +2670,28 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         end
     end)
 
-    -- Outside click closes
-    UserInputService.InputBegan:Connect(function(inp)
-        if not popupOpen then return end
-        if inp.UserInputType ~= Enum.UserInputType.MouseButton1
-            and inp.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-        local pos = inp.Position
-        local function inside(gui)
-            if not gui or not gui.Visible then return false end
-            local a = gui.AbsolutePosition
-            local s = gui.AbsoluteSize
-            return pos.X >= a.X and pos.X <= a.X + s.X
-                and pos.Y >= a.Y and pos.Y <= a.Y + s.Y
-        end
-        if not inside(popup) and not inside(preview) then
-            closePopup()
-        end
-    end)
+    -- Outside click closes (connected only while the popup is open)
+    connectOutside = function()
+        if outsideConn then outsideConn:Disconnect() end
+        outsideConn = UserInputService.InputBegan:Connect(function(inp)
+            if not popupOpen then return end
+            if inp.UserInputType ~= Enum.UserInputType.MouseButton1
+                and inp.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            local pos = inp.Position
+            local function inside(gui)
+                if not gui or not gui.Visible then return false end
+                local a = gui.AbsolutePosition
+                local s = gui.AbsoluteSize
+                return pos.X >= a.X and pos.X <= a.X + s.X
+                    and pos.Y >= a.Y and pos.Y <= a.Y + s.Y
+            end
+            if not inside(popup) and not inside(preview) then
+                closePopup()
+            end
+        end)
+    end
 
     applyVisuals(false)
 
@@ -2661,11 +2701,7 @@ local function createColorPickerRow(card, order, label, defaultColor, options)
         row = row,
         get = function() return currentColor end,
         set = function(c) setColor(c, true) end,
-        onChange = function(cb)
-            if type(cb) == "function" then
-                table.insert(callbacks, cb)
-            end
-        end,
+        onChange = makeOnChange(callbacks),
         destroy = function()
             closePopup()
             ConfigManager.unregister(id)
@@ -3265,14 +3301,7 @@ local function activateRail(index, targetSection)
     local page = tab.page
     if page then
         page.CanvasPosition = Vector2.new(0, 0)
-        if animationsEnabled then
-            page.BackgroundTransparency = 1
-            TweenService:Create(page, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                BackgroundTransparency = 0,
-            }):Play()
-        else
-            page.BackgroundTransparency = 1
-        end
+        page.BackgroundTransparency = 1
     end
 end
 
@@ -4050,41 +4079,22 @@ end)
 ----------------------------------------------------------------
 -- WINDOW DRAG
 ----------------------------------------------------------------
-local wDragging = false
-local wDragStart, wStartPos
-
 header.InputBegan:Connect(function(inp)
     if inp.UserInputType == Enum.UserInputType.MouseButton1
         or inp.UserInputType == Enum.UserInputType.Touch then
 
-        wDragging = true
-        wDragStart = inp.Position
-        wStartPos = window.Position
-    end
-end)
+        local dragStart = inp.Position
+        local startPos = window.Position
 
-UserInputService.InputChanged:Connect(function(inp)
-    if wDragging
-        and (
-            inp.UserInputType == Enum.UserInputType.MouseMovement
-            or inp.UserInputType == Enum.UserInputType.Touch
-        ) then
-
-        local delta = inp.Position - wDragStart
-
-        window.Position = UDim2.new(
-            wStartPos.X.Scale,
-            wStartPos.X.Offset + delta.X,
-            wStartPos.Y.Scale,
-            wStartPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1
-        or inp.UserInputType == Enum.UserInputType.Touch then
-        wDragging = false
+        trackDrag(function(moveInp)
+            local delta = moveInp.Position - dragStart
+            window.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end)
     end
 end)
 
@@ -4339,42 +4349,22 @@ do
 end
 
 do
-    local dragging = false
-    local dragStart
-    local startPos
-
     watermark.InputBegan:Connect(function(inp)
         if inp.UserInputType == Enum.UserInputType.MouseButton1
             or inp.UserInputType == Enum.UserInputType.Touch then
 
-            dragging = true
-            dragStart = inp.Position
-            startPos = watermark.Position
-        end
-    end)
+            local dragStart = inp.Position
+            local startPos = watermark.Position
 
-    UserInputService.InputChanged:Connect(function(inp)
-        if dragging
-            and (
-                inp.UserInputType == Enum.UserInputType.MouseMovement
-                or inp.UserInputType == Enum.UserInputType.Touch
-            ) then
-
-            local delta = inp.Position - dragStart
-
-            watermark.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(inp)
-        if inp.UserInputType == Enum.UserInputType.MouseButton1
-            or inp.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+            trackDrag(function(moveInp)
+                local delta = moveInp.Position - dragStart
+                watermark.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end)
         end
     end)
 end
@@ -4383,21 +4373,11 @@ end
 -- KEYBIND LIST
 ----------------------------------------------------------------
 local keybindListHost = nil
--- keybindListEnabled already declared earlier (shared state)
+local keybindHolder = nil
+local lastKeybindSignature = nil
+local KB_WIDTH = 224
 
-local function rebuildKeybindList()
-    if not keybindListHost then
-        return
-    end
-
-    for _, child in ipairs(keybindListHost:GetChildren()) do
-        if child.Name ~= "Title"
-            and not child:IsA("UIListLayout")
-            and not child:IsA("UIPadding") then
-            child:Destroy()
-        end
-    end
-
+local function collectKeybindEntries()
     local entries = {}
 
     for _, entry in pairs(keybindRegistry) do
@@ -4416,23 +4396,56 @@ local function rebuildKeybindList()
         return a.label:lower() < b.label:lower()
     end)
 
-    keybindListHost.Visible = keybindListEnabled and #entries > 0
+    return entries
+end
 
-    if not keybindListHost.Visible then
+-- Rebuilds ONLY the rows (inside keybindHolder). The host keeps its
+-- UICorner / UIStroke / gradient, so the panel stays rounded and themed.
+-- A signature check skips the rebuild when nothing changed (no flicker, no GC churn).
+local function rebuildKeybindList(force)
+    if not keybindListHost or not keybindHolder then
         return
+    end
+
+    local entries = collectKeybindEntries()
+
+    if not keybindListEnabled or #entries == 0 then
+        keybindListHost.Visible = false
+        lastKeybindSignature = nil
+        return
+    end
+
+    local parts = {}
+    for i, item in ipairs(entries) do
+        parts[i] = item.label .. "|" .. tostring(keyName(item.key)) .. "|" .. tostring(item.mode)
+    end
+    local signature = table.concat(parts, ";")
+
+    keybindListHost.Visible = true
+
+    if not force and signature == lastKeybindSignature then
+        return
+    end
+    lastKeybindSignature = signature
+
+    for _, child in ipairs(keybindHolder:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
     end
 
     for i, item in ipairs(entries) do
         local row = Instance.new("Frame")
+        row.Name = "KeybindRow"
         row.LayoutOrder = i
         row.Size = UDim2.new(1, 0, 0, 28)
         row.BackgroundTransparency = 1
         row.ZIndex = 131
-        row.Parent = keybindListHost
+        row.Parent = keybindHolder
 
         local name = Instance.new("TextLabel")
         name.BackgroundTransparency = 1
-        name.Size = UDim2.new(1, -98, 1, 0)
+        name.Size = UDim2.new(1, -104, 1, 0)
         name.Text = item.label
         name.TextColor3 = THEME.TextPrimary
         name.Font = Enum.Font.GothamMedium
@@ -4440,72 +4453,77 @@ local function rebuildKeybindList()
         name.TextXAlignment = Enum.TextXAlignment.Left
         name.TextYAlignment = Enum.TextYAlignment.Center
         name.TextTruncate = Enum.TextTruncate.AtEnd
-        name.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-        name.TextStrokeTransparency = 0.7
         name.ZIndex = 132
         name.Parent = row
 
         local mode = Instance.new("TextLabel")
         mode.AnchorPoint = Vector2.new(1, 0.5)
-        mode.Position = UDim2.new(1, -52, 0.5, 0)
-        mode.Size = UDim2.fromOffset(44, 17)
+        mode.Position = UDim2.new(1, -56, 0.5, 0)
+        mode.Size = UDim2.fromOffset(44, 16)
         mode.BackgroundTransparency = 1
-        mode.Text = item.mode
-        mode.TextColor3 = THEME.TextMuted
+        mode.Text = tostring(item.mode)
+        mode.TextColor3 = THEME.TextDim
         mode.Font = Enum.Font.Gotham
         mode.TextSize = 10
         mode.TextXAlignment = Enum.TextXAlignment.Right
         mode.TextYAlignment = Enum.TextYAlignment.Center
-        mode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-        mode.TextStrokeTransparency = 0.7
         mode.ZIndex = 132
         mode.Parent = row
 
-        local key = Instance.new("TextLabel")
-        key.AnchorPoint = Vector2.new(1, 0.5)
-        key.Position = UDim2.new(1, 0, 0.5, 0)
-        key.Size = UDim2.fromOffset(46, 22)
-        key.BackgroundColor3 = Color3.fromRGB(8, 5, 15)
-        key.BackgroundTransparency = 0.05
-        key.Text = keyName(item.key)
-        key.TextColor3 = THEME.AccentLight
-        key.Font = Enum.Font.GothamBold
-        key.TextSize = 10
-        key.TextXAlignment = Enum.TextXAlignment.Center
-        key.TextYAlignment = Enum.TextYAlignment.Center
-        key.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-        key.TextStrokeTransparency = 0.65
-        key.ZIndex = 133
-        key.Parent = row
-        corner(key, 8)
-        stroke(key, THEME.Accent, 1, 0.22)
+        local badge = Instance.new("TextLabel")
+        badge.AnchorPoint = Vector2.new(1, 0.5)
+        badge.Position = UDim2.new(1, 0, 0.5, 0)
+        badge.Size = UDim2.fromOffset(50, 22)
+        badge.BackgroundColor3 = THEME.PanelAlt
+        badge.BackgroundTransparency = 0.1
+        badge.Text = tostring(keyName(item.key))
+        badge.TextColor3 = THEME.AccentLight
+        badge.Font = Enum.Font.GothamBold
+        badge.TextSize = 10
+        badge.TextXAlignment = Enum.TextXAlignment.Center
+        badge.TextYAlignment = Enum.TextYAlignment.Center
+        badge.TextTruncate = Enum.TextTruncate.AtEnd
+        badge.ZIndex = 133
+        badge.Parent = row
+        corner(badge, 8)
+        stroke(badge, THEME.Accent, 1, 0.35)
     end
 end
 
 keybindListHost = Instance.new("Frame")
 keybindListHost.Name = "KeybindList"
 keybindListHost.AnchorPoint = Vector2.new(1, 0)
-keybindListHost.Position = UDim2.new(1, -12, 0, 48)
-keybindListHost.Size = UDim2.fromOffset(236, 0)
+keybindListHost.Position = UDim2.new(1, -12, 0, 52)
+keybindListHost.Size = UDim2.fromOffset(KB_WIDTH, 0)
 keybindListHost.AutomaticSize = Enum.AutomaticSize.Y
-keybindListHost.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+keybindListHost.BackgroundColor3 = THEME.Panel
 keybindListHost.BackgroundTransparency = 0.06
+keybindListHost.BorderSizePixel = 0
 keybindListHost.Visible = false
 keybindListHost.ZIndex = 130
 keybindListHost.Parent = screenGui
-corner(keybindListHost, 13)
-stroke(keybindListHost, THEME.Accent, 1, 0.32)
+corner(keybindListHost, 12)
+stroke(keybindListHost, THEME.Accent, 1.2, 0.3)
+
+local kbGradient = Instance.new("UIGradient")
+kbGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.0, Color3.fromRGB(10, 5, 20)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(15, 8, 30)),
+    ColorSequenceKeypoint.new(1.0, Color3.fromRGB(22, 11, 44)),
+})
+kbGradient.Rotation = 90
+kbGradient.Parent = keybindListHost
 
 local kbPad = Instance.new("UIPadding")
-kbPad.PaddingTop = UDim.new(0, 7)
-kbPad.PaddingBottom = UDim.new(0, 8)
-kbPad.PaddingLeft = UDim.new(0, 9)
-kbPad.PaddingRight = UDim.new(0, 9)
+kbPad.PaddingTop = UDim.new(0, 8)
+kbPad.PaddingBottom = UDim.new(0, 10)
+kbPad.PaddingLeft = UDim.new(0, 12)
+kbPad.PaddingRight = UDim.new(0, 12)
 kbPad.Parent = keybindListHost
 
 local kbLayout = Instance.new("UIListLayout")
 kbLayout.SortOrder = Enum.SortOrder.LayoutOrder
-kbLayout.Padding = UDim.new(0, 2)
+kbLayout.Padding = UDim.new(0, 4)
 kbLayout.Parent = keybindListHost
 
 local kbTitle = Instance.new("Frame")
@@ -4527,7 +4545,7 @@ kbDragon.Parent = kbTitle
 
 local kbDivider = Instance.new("Frame")
 kbDivider.Size = UDim2.fromOffset(1, 15)
-kbDivider.Position = UDim2.fromOffset(26, 6)
+kbDivider.Position = UDim2.fromOffset(27, 6)
 kbDivider.BackgroundColor3 = THEME.Accent
 kbDivider.BackgroundTransparency = 0.2
 kbDivider.BorderSizePixel = 0
@@ -4535,8 +4553,8 @@ kbDivider.ZIndex = 132
 kbDivider.Parent = kbTitle
 
 local kbTitleLabel = Instance.new("TextLabel")
-kbTitleLabel.Position = UDim2.fromOffset(34, 0)
-kbTitleLabel.Size = UDim2.new(1, -34, 1, 0)
+kbTitleLabel.Position = UDim2.fromOffset(36, 0)
+kbTitleLabel.Size = UDim2.new(1, -36, 1, 0)
 kbTitleLabel.BackgroundTransparency = 1
 kbTitleLabel.Text = "KEYBINDS"
 kbTitleLabel.TextColor3 = THEME.TextPrimary
@@ -4544,30 +4562,73 @@ kbTitleLabel.Font = Enum.Font.GothamBold
 kbTitleLabel.TextSize = 12
 kbTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 kbTitleLabel.TextYAlignment = Enum.TextYAlignment.Center
-kbTitleLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-kbTitleLabel.TextStrokeTransparency = 0.65
 kbTitleLabel.ZIndex = 132
 kbTitleLabel.Parent = kbTitle
+
+local kbLine = Instance.new("Frame")
+kbLine.Name = "TitleLine"
+kbLine.LayoutOrder = 1
+kbLine.Size = UDim2.new(1, 0, 0, 1)
+kbLine.BackgroundColor3 = THEME.Accent
+kbLine.BackgroundTransparency = 0.5
+kbLine.BorderSizePixel = 0
+kbLine.ZIndex = 131
+kbLine.Parent = keybindListHost
+
+keybindHolder = Instance.new("Frame")
+keybindHolder.Name = "Rows"
+keybindHolder.LayoutOrder = 2
+keybindHolder.Size = UDim2.new(1, 0, 0, 0)
+keybindHolder.AutomaticSize = Enum.AutomaticSize.Y
+keybindHolder.BackgroundTransparency = 1
+keybindHolder.BorderSizePixel = 0
+keybindHolder.ZIndex = 131
+keybindHolder.Parent = keybindListHost
+
+local kbHolderLayout = Instance.new("UIListLayout")
+kbHolderLayout.SortOrder = Enum.SortOrder.LayoutOrder
+kbHolderLayout.Padding = UDim.new(0, 2)
+kbHolderLayout.Parent = keybindHolder
+
+-- drag the list by its title bar
+kbTitle.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+
+        local dragStart = inp.Position
+        local startPos = keybindListHost.Position
+
+        trackDrag(function(moveInp)
+            local delta = moveInp.Position - dragStart
+            keybindListHost.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end)
+    end
+end)
 
 setKeybindListVisible = function(value)
     keybindListEnabled = value == true
 
     if not keybindListEnabled then
         keybindListHost.Visible = false
+        lastKeybindSignature = nil
     else
-        rebuildKeybindList()
+        rebuildKeybindList(true)
     end
 end
 
 task.spawn(function()
     while screenGui.Parent do
         if keybindListEnabled then
-            rebuildKeybindList()
+            rebuildKeybindList(false)
         end
-        task.wait(0.2)
+        task.wait(0.25)
     end
 end)
-
 
 
 ----------------------------------------------------------------
